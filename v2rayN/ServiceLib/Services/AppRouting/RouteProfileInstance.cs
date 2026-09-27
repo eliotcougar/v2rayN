@@ -36,7 +36,7 @@ internal sealed class RouteProfileInstance : IRouteProfile
         RouteProfileInstance? instance = null;
         try
         {
-            await File.WriteAllTextAsync(file, root.ToJsonString(), token);
+            await File.WriteAllTextAsync(file, JsonUtils.Serialize(root), token);
             process = new ProcessService(core, $"run -c \"{file}\"", Path.GetDirectoryName(core)!, true, false, environment,
                 (_, message) =>
                 {
