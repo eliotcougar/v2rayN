@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1766,5 +1766,170 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="menuNewUpdate" xml:space="preserve">
     <value>Nouvelle MAJ</value>
+  </data>
+  <data name="AppRoutingMonitorInterfaces" xml:space="preserve">
+    <value>Interfaces surveillées</value>
+  </data>
+  <data name="AppRoutingMonitorNewInterfaces" xml:space="preserve">
+    <value>Surveiller les nouvelles interfaces</value>
+  </data>
+  <data name="AppRoutingInterfacesHelp" xml:space="preserve">
+    <value>Appliquer les règles de routage des applications uniquement aux interfaces cochées. Les nouvelles interfaces reprennent le réglage du commutateur lors de leur première détection ; les choix existants sont conservés. Redémarrez les applications concernées après modification.</value>
+  </data>
+  <data name="AppRoutingMonitor" xml:space="preserve">
+    <value>Surveiller</value>
+  </data>
+  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
+    <value>Actuellement absente</value>
+  </data>
+  <data name="AppRoutingAddProcessRule" xml:space="preserve">
+    <value>Ajouter une règle de processus</value>
+  </data>
+  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
+    <value>Ajouter une règle d’application Windows</value>
+  </data>
+  <data name="AppRoutingWindowsApps" xml:space="preserve">
+    <value>Applications Windows</value>
+  </data>
+  <data name="AppRoutingRuleName" xml:space="preserve">
+    <value>Nom de la règle</value>
+  </data>
+  <data name="AppRoutingRuleColumn" xml:space="preserve">
+    <value>Application / règle</value>
+  </data>
+  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
+    <value>Modifier les applications Windows</value>
+  </data>
+  <data name="AppRoutingPackageSearch" xml:space="preserve">
+    <value>Rechercher des packages</value>
+  </data>
+  <data name="AppRoutingPackageAccount" xml:space="preserve">
+    <value>Packages de {0}</value>
+  </data>
+  <data name="AppRoutingPackageHelp" xml:space="preserve">
+    <value>Toutes les applications de chaque package coché partagent cette règle. L’import copie la sélection des exemptions de bouclage sans modifier les autorisations Windows. Le trafic déjà envoyé au proxy système local suit toujours le routage de ce proxy.</value>
+  </data>
+  <data name="AppRoutingLoadingPackages" xml:space="preserve">
+    <value>Lecture des packages installés…</value>
+  </data>
+  <data name="AppRoutingPackagesSelected" xml:space="preserve">
+    <value>Packages : {0}</value>
+  </data>
+  <data name="AppRoutingPackageUnavailable" xml:space="preserve">
+    <value>Non installé pour ce compte</value>
+  </data>
+  <data name="AppRoutingPackageAssigned" xml:space="preserve">
+    <value>Déjà affecté à « {0} »</value>
+  </data>
+  <data name="AppRoutingPackageRequired" xml:space="preserve">
+    <value>Saisissez un nom de règle et sélectionnez au moins un package.</value>
+  </data>
+  <data name="AppRoutingPackageConflict" xml:space="preserve">
+    <value>Chaque package ne peut appartenir qu’à une seule règle d’application Windows activée.</value>
+  </data>
+  <data name="AppRoutingPackageImport" xml:space="preserve">
+    <value>Importer les exemptions de bouclage</value>
+  </data>
+  <data name="AppRoutingPackageImportResult" xml:space="preserve">
+    <value>Sélectionnés : {0}. Exemptions sans correspondance : {1}. Déjà affectés : {2}. Les autorisations Windows n’ont pas été modifiées.</value>
+  </data>
+  <data name="AppRoutingSelectVisible" xml:space="preserve">
+    <value>Sélectionner les éléments visibles</value>
+  </data>
+  <data name="AppRoutingClearVisible" xml:space="preserve">
+    <value>Désélectionner les éléments visibles</value>
+  </data>
+  <data name="RoutingBlocksTitle" xml:space="preserve">
+    <value>Routing rule details — block editor (preview)</value>
+  </data>
+  <data name="RoutingBlocksEdit" xml:space="preserve">
+    <value>Edit as blocks (preview)</value>
+  </data>
+  <data name="RoutingBlocksCompatibility" xml:space="preserve">
+    <value>Preview rules are inactive in older v2rayN builds. Their settings are retained unless edited or replaced in the older build.</value>
+  </data>
+  <data name="RoutingBlocksAdd" xml:space="preserve">
+    <value>Add filter</value>
+  </data>
+  <data name="RoutingBlocksRemove" xml:space="preserve">
+    <value>Remove filter</value>
+  </data>
+  <data name="RoutingBlocksAnd" xml:space="preserve">
+    <value>AND</value>
+  </data>
+  <data name="RoutingBlocksEmpty" xml:space="preserve">
+    <value>Add at least one filter and fill every block, or remove empty blocks.</value>
+  </data>
+  <data name="RoutingBlocksDnsOnly" xml:space="preserve">
+    <value>DNS rules support a Domain block only. Use Routing for application and connection filters.</value>
+  </data>
+  <data name="RoutingBlocksInvalidPort" xml:space="preserve">
+    <value>Use ports 0–65535 or ranges such as 8000-8080.</value>
+  </data>
+  <data name="RoutingBlocksInvalidNetwork" xml:space="preserve">
+    <value>Select TCP, UDP, or both.</value>
+  </data>
+  <data name="RoutingBlocksOutboundRequired" xml:space="preserve">
+    <value>Select an outbound tag.</value>
+  </data>
+  <data name="RoutingBlocksWindowsOnly" xml:space="preserve">
+    <value>Windows App filters require Windows.</value>
+  </data>
+  <data name="RoutingBlocksDomainHint" xml:space="preserve">
+    <value>Un domaine par ligne. Préfixez une ligne par # pour la désactiver.</value>
+  </data>
+  <data name="RoutingBlocksIpHint" xml:space="preserve">
+    <value>Une adresse IP, un CIDR ou une valeur geoip: par ligne. Préfixez une ligne par # pour la désactiver.</value>
+  </data>
+  <data name="RoutingBlocksPortHint" xml:space="preserve">
+    <value>Ports de destination, ex. 443, 8000-8080. Seul ou avec Réseau, sélectionne le trafic pour WinDivert. Les plages complètes restent des règles de repli.</value>
+  </data>
+  <data name="RoutingBlocksProcessHint" xml:space="preserve">
+    <value>Utilisez un chemin complet, un dossier se terminant par / ou un nom de fichier. Enfants concerne le routage WinDivert.</value>
+  </data>
+  <data name="RoutingBlocksPackageHint" xml:space="preserve">
+    <value>Les applications activées sont des alternatives. Les processus enfants concernent WinDivert. Cliquez sur le titre de la colonne des noms pour trier.</value>
+  </data>
+  <data name="RoutingBlocksInboundHint" xml:space="preserve">
+    <value>Balises entrantes disponibles :</value>
+  </data>
+  <data name="RoutingBlocksValuesHint" xml:space="preserve">
+    <value>Match any of the selected values.</value>
+  </data>
+  <data name="RoutingBlocksProcess" xml:space="preserve">
+    <value>Process</value>
+  </data>
+  <data name="RoutingBlocksWindowsApp" xml:space="preserve">
+    <value>Windows App</value>
+  </data>
+  <data name="RoutingBlocksInboundTag" xml:space="preserve">
+    <value>Inbound Tag</value>
+  </data>
+  <data name="RoutingBlocksNetwork" xml:space="preserve">
+    <value>Network</value>
+  </data>
+  <data name="RoutingBlocksProtocol" xml:space="preserve">
+    <value>Protocol</value>
+  </data>
+  <data name="RoutingBlocksOutboundTag" xml:space="preserve">
+    <value>Outbound tag</value>
+  </data>
+  <data name="RoutingBlocksOr" xml:space="preserve">
+    <value>OR</value>
+  </data>
+  <data name="RoutingBlocksFullPath" xml:space="preserve">
+    <value>Chemin complet</value>
+  </data>
+  <data name="RoutingBlocksFolder" xml:space="preserve">
+    <value>Dossier</value>
+  </data>
+  <data name="RoutingBlocksExecutable" xml:space="preserve">
+    <value>Exécutable</value>
+  </data>
+  <data name="RoutingBlocksMoveUp" xml:space="preserve">
+    <value>Monter</value>
+  </data>
+  <data name="RoutingBlocksMoveDown" xml:space="preserve">
+    <value>Descendre</value>
   </data>
 </root>

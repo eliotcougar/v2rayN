@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1898,5 +1898,170 @@
   </data>
   <data name="TbSortingProcess" xml:space="preserve">
     <value>Процесс</value>
+  </data>
+  <data name="AppRoutingMonitorInterfaces" xml:space="preserve">
+    <value>Отслеживаемые интерфейсы</value>
+  </data>
+  <data name="AppRoutingMonitorNewInterfaces" xml:space="preserve">
+    <value>Отслеживать новые интерфейсы</value>
+  </data>
+  <data name="AppRoutingInterfacesHelp" xml:space="preserve">
+    <value>Применять правила маршрутизации приложений только на отмеченных интерфейсах. Новые интерфейсы получают состояние переключателя при первом обнаружении; существующие настройки сохраняются. После изменения выбора перезапустите маршрутизируемые приложения.</value>
+  </data>
+  <data name="AppRoutingMonitor" xml:space="preserve">
+    <value>Отслеживать</value>
+  </data>
+  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
+    <value>Сейчас отсутствует</value>
+  </data>
+  <data name="AppRoutingAddProcessRule" xml:space="preserve">
+    <value>Добавить правило процесса</value>
+  </data>
+  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
+    <value>Добавить правило приложения Windows</value>
+  </data>
+  <data name="AppRoutingWindowsApps" xml:space="preserve">
+    <value>Приложения Windows</value>
+  </data>
+  <data name="AppRoutingRuleName" xml:space="preserve">
+    <value>Название правила</value>
+  </data>
+  <data name="AppRoutingRuleColumn" xml:space="preserve">
+    <value>Приложение / правило</value>
+  </data>
+  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
+    <value>Изменить приложения Windows</value>
+  </data>
+  <data name="AppRoutingPackageSearch" xml:space="preserve">
+    <value>Поиск пакетов</value>
+  </data>
+  <data name="AppRoutingPackageAccount" xml:space="preserve">
+    <value>Пакеты пользователя {0}</value>
+  </data>
+  <data name="AppRoutingPackageHelp" xml:space="preserve">
+    <value>Все приложения в отмеченных пакетах используют это правило. Импорт копирует список исключений loopback, не меняя разрешений Windows. Трафик, уже отправленный локальному системному прокси, по-прежнему следует его маршрутизации.</value>
+  </data>
+  <data name="AppRoutingLoadingPackages" xml:space="preserve">
+    <value>Чтение установленных пакетов…</value>
+  </data>
+  <data name="AppRoutingPackagesSelected" xml:space="preserve">
+    <value>Пакетов: {0}</value>
+  </data>
+  <data name="AppRoutingPackageUnavailable" xml:space="preserve">
+    <value>Не установлен для этого пользователя</value>
+  </data>
+  <data name="AppRoutingPackageAssigned" xml:space="preserve">
+    <value>Уже назначен правилу «{0}»</value>
+  </data>
+  <data name="AppRoutingPackageRequired" xml:space="preserve">
+    <value>Введите название правила и выберите хотя бы один пакет.</value>
+  </data>
+  <data name="AppRoutingPackageConflict" xml:space="preserve">
+    <value>Каждый пакет может входить только в одно включённое правило приложений Windows.</value>
+  </data>
+  <data name="AppRoutingPackageImport" xml:space="preserve">
+    <value>Импортировать исключения loopback</value>
+  </data>
+  <data name="AppRoutingPackageImportResult" xml:space="preserve">
+    <value>Выбрано: {0}. Исключений без соответствующего пакета: {1}. Уже назначено другим правилам: {2}. Разрешения Windows не изменены.</value>
+  </data>
+  <data name="AppRoutingSelectVisible" xml:space="preserve">
+    <value>Выбрать видимые</value>
+  </data>
+  <data name="AppRoutingClearVisible" xml:space="preserve">
+    <value>Снять видимые</value>
+  </data>
+  <data name="RoutingBlocksTitle" xml:space="preserve">
+    <value>Правило маршрутизации — редактор блоков (предпросмотр)</value>
+  </data>
+  <data name="RoutingBlocksEdit" xml:space="preserve">
+    <value>Редактировать блоками (предпросмотр)</value>
+  </data>
+  <data name="RoutingBlocksCompatibility" xml:space="preserve">
+    <value>Правила этого редактора неактивны в старых версиях v2rayN. Настройки сохранятся, если не редактировать и не заменять их в старой версии.</value>
+  </data>
+  <data name="RoutingBlocksAdd" xml:space="preserve">
+    <value>Добавить фильтр</value>
+  </data>
+  <data name="RoutingBlocksRemove" xml:space="preserve">
+    <value>Удалить фильтр</value>
+  </data>
+  <data name="RoutingBlocksAnd" xml:space="preserve">
+    <value>И</value>
+  </data>
+  <data name="RoutingBlocksEmpty" xml:space="preserve">
+    <value>Добавьте хотя бы один фильтр и заполните все блоки либо удалите пустые.</value>
+  </data>
+  <data name="RoutingBlocksDnsOnly" xml:space="preserve">
+    <value>Правила DNS поддерживают только блок Domain. Для фильтров приложений и соединений выберите Routing.</value>
+  </data>
+  <data name="RoutingBlocksInvalidPort" xml:space="preserve">
+    <value>Укажите порты 0–65535 или диапазоны, например 8000-8080.</value>
+  </data>
+  <data name="RoutingBlocksInvalidNetwork" xml:space="preserve">
+    <value>Выберите TCP, UDP или оба протокола.</value>
+  </data>
+  <data name="RoutingBlocksOutboundRequired" xml:space="preserve">
+    <value>Выберите исходящее подключение.</value>
+  </data>
+  <data name="RoutingBlocksWindowsOnly" xml:space="preserve">
+    <value>Фильтр Windows App работает только в Windows.</value>
+  </data>
+  <data name="RoutingBlocksDomainHint" xml:space="preserve">
+    <value>Один домен в строке. Начните строку с #, чтобы закомментировать её.</value>
+  </data>
+  <data name="RoutingBlocksIpHint" xml:space="preserve">
+    <value>Один IP, CIDR или geoip: в строке. Начните строку с #, чтобы закомментировать её.</value>
+  </data>
+  <data name="RoutingBlocksPortHint" xml:space="preserve">
+    <value>Порты назначения, например 443, 8000-8080. Без других блоков или только с «Сеть» отбирает трафик для WinDivert. Полные диапазоны остаются резервными правилами.</value>
+  </data>
+  <data name="RoutingBlocksProcessHint" xml:space="preserve">
+    <value>Укажите полный путь, папку с / в конце или имя файла. Дочерние процессы учитываются при маршрутизации WinDivert.</value>
+  </data>
+  <data name="RoutingBlocksPackageHint" xml:space="preserve">
+    <value>Включённые приложения объединяются через ИЛИ. Дочерние процессы — для WinDivert. Нажмите заголовок имени для сортировки.</value>
+  </data>
+  <data name="RoutingBlocksInboundHint" xml:space="preserve">
+    <value>Доступные входящие теги:</value>
+  </data>
+  <data name="RoutingBlocksValuesHint" xml:space="preserve">
+    <value>Совпадение с любым выбранным значением.</value>
+  </data>
+  <data name="RoutingBlocksProcess" xml:space="preserve">
+    <value>Процесс</value>
+  </data>
+  <data name="RoutingBlocksWindowsApp" xml:space="preserve">
+    <value>Приложение Windows</value>
+  </data>
+  <data name="RoutingBlocksInboundTag" xml:space="preserve">
+    <value>Входящий тег</value>
+  </data>
+  <data name="RoutingBlocksNetwork" xml:space="preserve">
+    <value>Сеть</value>
+  </data>
+  <data name="RoutingBlocksProtocol" xml:space="preserve">
+    <value>Протокол</value>
+  </data>
+  <data name="RoutingBlocksOutboundTag" xml:space="preserve">
+    <value>Исходящий тег</value>
+  </data>
+  <data name="RoutingBlocksOr" xml:space="preserve">
+    <value>ИЛИ</value>
+  </data>
+  <data name="RoutingBlocksFullPath" xml:space="preserve">
+    <value>Полный путь</value>
+  </data>
+  <data name="RoutingBlocksFolder" xml:space="preserve">
+    <value>Папка</value>
+  </data>
+  <data name="RoutingBlocksExecutable" xml:space="preserve">
+    <value>Исполняемый файл</value>
+  </data>
+  <data name="RoutingBlocksMoveUp" xml:space="preserve">
+    <value>Выше</value>
+  </data>
+  <data name="RoutingBlocksMoveDown" xml:space="preserve">
+    <value>Ниже</value>
   </data>
 </root>

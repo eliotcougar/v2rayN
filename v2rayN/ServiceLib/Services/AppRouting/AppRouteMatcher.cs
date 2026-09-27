@@ -1,18 +1,32 @@
-namespace ServiceLib.Services.AppRouting;
+﻿namespace ServiceLib.Services.AppRouting;
 
 internal sealed class AppRouteMatcher
 {
+    internal RouteSharedPolicy? Shared { get; }
     private readonly Dictionary<string, AppRouteRule> _paths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AppRouteRule> _names = new(StringComparer.OrdinalIgnoreCase);
-    public bool IncludesChildren => _paths.Values.Concat(_names.Values).Any(rule => rule.IncludeChildProcesses);
+    private readonly Dictionary<string, AppRouteRule> _packages = new(StringComparer.OrdinalIgnoreCase);
+    public bool HasPackages => _packages.Count != 0 || Shared?.HasPackages == true;
+    public bool PackagesIncludeChildren { get; }
+    public bool IncludesChildren => Shared?.IncludesChildren == true || _paths.Values.Concat(_names.Values).Concat(_packages.Values).Any(rule => rule.IncludeChildProcesses);
 
-    public bool NeedsPath(string name) => _paths.Keys.Any(path => string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase));
+    public bool NeedsPath(string name) => Shared?.NeedsPath(name) == true || _paths.Keys.Any(path => string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase));
 
-    public AppRouteMatcher(IEnumerable<AppRouteRule> rules)
+    public AppRouteMatcher(IEnumerable<AppRouteRule> rules, RouteSharedPolicy? shared = null)
     {
+        Shared = shared;
+        PackagesIncludeChildren = shared?.PackagesIncludeChildren == true;
         foreach (var rule in rules.Where(r => r.Enabled))
         {
-            (rule.MatchByName ? _names : _paths).Add(Normalize(rule.ExecutablePath, rule.MatchByName), rule);
+            if (rule.MatchKind == AppRouteMatchKind.WindowsApp)
+            {
+                PackagesIncludeChildren |= rule.IncludeChildProcesses;
+                foreach (var family in rule.PackageFamilies) { _packages.Add(family, rule); }
+            }
+            else
+            {
+                (rule.MatchByName ? _names : _paths).Add(Normalize(rule.ExecutablePath, rule.MatchByName), rule);
+            }
         }
     }
 
@@ -50,13 +64,15 @@ internal sealed class AppRouteMatcher
         return executable;
     }
 
-    public AppRouteRule? Find(string? path, string executableName)
+    public AppRouteRule? Find(string? path, string executableName, string? packageFamily = null)
     {
         if (!string.IsNullOrEmpty(path) && _paths.TryGetValue(Path.GetFullPath(path), out var exact))
         {
             return exact;
         }
 
-        return _names.GetValueOrDefault(executableName);
+        // Explicit executable rules override the broader package selection.
+        return _names.GetValueOrDefault(executableName) ??
+            (packageFamily == null ? null : _packages.GetValueOrDefault(packageFamily));
     }
 }

@@ -105,6 +105,14 @@ public partial class OptionSettingWindow : WindowBase<OptionSettingViewModel>
             this.Bind(ViewModel, vm => vm.MacOSShowInDock, v => v.togMacOSShowInDock.IsChecked).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.EnableDragDropSort, v => v.togEnableDragDropSort.IsChecked).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.DoubleClick2Activate, v => v.togDoubleClick2Activate.IsChecked).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.ApplicationRouting.Enabled, v => v.togAppRouting.IsChecked).DisposeWith(disposables);
+            this.OneWayBind(ViewModel, vm => vm.ApplicationRouting.CanChangeRouting, v => v.togAppRouting.IsEnabled).DisposeWith(disposables);
+            this.BindCommand(ViewModel, vm => vm.ApplicationRouting.PickInterfacesCmd, v => v.btnAppRoutingInterfaces).DisposeWith(disposables);
+            ViewModel.ApplicationRouting.PickInterfaces.RegisterHandler(async interaction =>
+            {
+                var picker = new AppRoutingInterfaceWindow { ViewModel = interaction.Input, DataContext = interaction.Input };
+                interaction.SetOutput(await picker.ShowDialog<bool>(this));
+            }).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.AutoUpdateInterval, v => v.txtautoUpdateInterval.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.CurrentFontFamily, v => v.cmbcurrentFontFamily.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.SpeedTestTimeout, v => v.cmbSpeedTestTimeout.SelectedValue).DisposeWith(disposables);

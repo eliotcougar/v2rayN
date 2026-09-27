@@ -260,6 +260,7 @@
                                 x:Name="menuRuleAdd2"
                                 Height="{StaticResource MenuItemHeight}"
                                 Header="{x:Static resx:ResUI.menuRuleAdd}" />
+                            <MenuItem x:Name="menuRuleEditBlocks" Header="{x:Static resx:ResUI.RoutingBlocksEdit}" />
                             <MenuItem
                                 x:Name="menuRuleRemove"
                                 Height="{StaticResource MenuItemHeight}"

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1899,5 +1899,170 @@
   </data>
   <data name="TbSortingProcess" xml:space="preserve">
     <value>行程</value>
+  </data>
+  <data name="AppRoutingMonitorInterfaces" xml:space="preserve">
+    <value>監控的網路介面</value>
+  </data>
+  <data name="AppRoutingMonitorNewInterfaces" xml:space="preserve">
+    <value>監控新介面</value>
+  </data>
+  <data name="AppRoutingInterfacesHelp" xml:space="preserve">
+    <value>僅對選取的介面套用應用程式路由規則。新介面首次發現時採用開關設定；現有選擇保持不變。變更選擇後，請重新啟動被路由的應用程式。</value>
+  </data>
+  <data name="AppRoutingMonitor" xml:space="preserve">
+    <value>監控</value>
+  </data>
+  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
+    <value>目前不存在</value>
+  </data>
+  <data name="AppRoutingAddProcessRule" xml:space="preserve">
+    <value>新增處理程序規則</value>
+  </data>
+  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
+    <value>新增 Windows 應用程式規則</value>
+  </data>
+  <data name="AppRoutingWindowsApps" xml:space="preserve">
+    <value>Windows 應用程式</value>
+  </data>
+  <data name="AppRoutingRuleName" xml:space="preserve">
+    <value>規則名稱</value>
+  </data>
+  <data name="AppRoutingRuleColumn" xml:space="preserve">
+    <value>應用程式 / 規則</value>
+  </data>
+  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
+    <value>編輯 Windows 應用程式</value>
+  </data>
+  <data name="AppRoutingPackageSearch" xml:space="preserve">
+    <value>搜尋套件</value>
+  </data>
+  <data name="AppRoutingPackageAccount" xml:space="preserve">
+    <value>{0} 的套件</value>
+  </data>
+  <data name="AppRoutingPackageHelp" xml:space="preserve">
+    <value>每個勾選套件中的所有應用程式共用此規則。匯入僅複製回環豁免選取，不會變更 Windows 權限。已傳送至本機系統代理的流量仍遵循該代理的路由。</value>
+  </data>
+  <data name="AppRoutingLoadingPackages" xml:space="preserve">
+    <value>正在讀取已安裝的套件…</value>
+  </data>
+  <data name="AppRoutingPackagesSelected" xml:space="preserve">
+    <value>套件：{0}</value>
+  </data>
+  <data name="AppRoutingPackageUnavailable" xml:space="preserve">
+    <value>此帳戶未安裝</value>
+  </data>
+  <data name="AppRoutingPackageAssigned" xml:space="preserve">
+    <value>已指派給「{0}」</value>
+  </data>
+  <data name="AppRoutingPackageRequired" xml:space="preserve">
+    <value>請輸入規則名稱並至少選取一個套件。</value>
+  </data>
+  <data name="AppRoutingPackageConflict" xml:space="preserve">
+    <value>每個套件只能屬於一條已啟用的 Windows 應用程式規則。</value>
+  </data>
+  <data name="AppRoutingPackageImport" xml:space="preserve">
+    <value>匯入回環豁免規則</value>
+  </data>
+  <data name="AppRoutingPackageImportResult" xml:space="preserve">
+    <value>已選取：{0}。未符合的豁免：{1}。已指派：{2}。未變更 Windows 權限。</value>
+  </data>
+  <data name="AppRoutingSelectVisible" xml:space="preserve">
+    <value>選取可見項目</value>
+  </data>
+  <data name="AppRoutingClearVisible" xml:space="preserve">
+    <value>取消選取可見項目</value>
+  </data>
+  <data name="RoutingBlocksTitle" xml:space="preserve">
+    <value>Routing rule details — block editor (preview)</value>
+  </data>
+  <data name="RoutingBlocksEdit" xml:space="preserve">
+    <value>Edit as blocks (preview)</value>
+  </data>
+  <data name="RoutingBlocksCompatibility" xml:space="preserve">
+    <value>Preview rules are inactive in older v2rayN builds. Their settings are retained unless edited or replaced in the older build.</value>
+  </data>
+  <data name="RoutingBlocksAdd" xml:space="preserve">
+    <value>Add filter</value>
+  </data>
+  <data name="RoutingBlocksRemove" xml:space="preserve">
+    <value>Remove filter</value>
+  </data>
+  <data name="RoutingBlocksAnd" xml:space="preserve">
+    <value>AND</value>
+  </data>
+  <data name="RoutingBlocksEmpty" xml:space="preserve">
+    <value>Add at least one filter and fill every block, or remove empty blocks.</value>
+  </data>
+  <data name="RoutingBlocksDnsOnly" xml:space="preserve">
+    <value>DNS rules support a Domain block only. Use Routing for application and connection filters.</value>
+  </data>
+  <data name="RoutingBlocksInvalidPort" xml:space="preserve">
+    <value>Use ports 0–65535 or ranges such as 8000-8080.</value>
+  </data>
+  <data name="RoutingBlocksInvalidNetwork" xml:space="preserve">
+    <value>Select TCP, UDP, or both.</value>
+  </data>
+  <data name="RoutingBlocksOutboundRequired" xml:space="preserve">
+    <value>Select an outbound tag.</value>
+  </data>
+  <data name="RoutingBlocksWindowsOnly" xml:space="preserve">
+    <value>Windows App filters require Windows.</value>
+  </data>
+  <data name="RoutingBlocksDomainHint" xml:space="preserve">
+    <value>每行一個網域。以 # 開頭可註解或停用該行。</value>
+  </data>
+  <data name="RoutingBlocksIpHint" xml:space="preserve">
+    <value>每行一個 IP、CIDR 或 geoip: 值。以 # 開頭可註解或停用該行。</value>
+  </data>
+  <data name="RoutingBlocksPortHint" xml:space="preserve">
+    <value>目的地連接埠或範圍，例如 443, 8000-8080。單獨使用或僅搭配「網路」時為 WinDivert 選取流量。完整連接埠範圍仍為備援規則。</value>
+  </data>
+  <data name="RoutingBlocksProcessHint" xml:space="preserve">
+    <value>輸入完整路徑、以 / 結尾的資料夾或檔案名稱。子處理程序選項用於 WinDivert 路由。</value>
+  </data>
+  <data name="RoutingBlocksPackageHint" xml:space="preserve">
+    <value>已啟用的應用程式以「或」比對。子程序選項用於 WinDivert。按一下名稱欄標題即可排序。</value>
+  </data>
+  <data name="RoutingBlocksInboundHint" xml:space="preserve">
+    <value>可用的輸入標籤：</value>
+  </data>
+  <data name="RoutingBlocksValuesHint" xml:space="preserve">
+    <value>Match any of the selected values.</value>
+  </data>
+  <data name="RoutingBlocksProcess" xml:space="preserve">
+    <value>Process</value>
+  </data>
+  <data name="RoutingBlocksWindowsApp" xml:space="preserve">
+    <value>Windows App</value>
+  </data>
+  <data name="RoutingBlocksInboundTag" xml:space="preserve">
+    <value>Inbound Tag</value>
+  </data>
+  <data name="RoutingBlocksNetwork" xml:space="preserve">
+    <value>Network</value>
+  </data>
+  <data name="RoutingBlocksProtocol" xml:space="preserve">
+    <value>Protocol</value>
+  </data>
+  <data name="RoutingBlocksOutboundTag" xml:space="preserve">
+    <value>Outbound tag</value>
+  </data>
+  <data name="RoutingBlocksOr" xml:space="preserve">
+    <value>OR</value>
+  </data>
+  <data name="RoutingBlocksFullPath" xml:space="preserve">
+    <value>完整路徑</value>
+  </data>
+  <data name="RoutingBlocksFolder" xml:space="preserve">
+    <value>資料夾</value>
+  </data>
+  <data name="RoutingBlocksExecutable" xml:space="preserve">
+    <value>執行檔</value>
+  </data>
+  <data name="RoutingBlocksMoveUp" xml:space="preserve">
+    <value>上移</value>
+  </data>
+  <data name="RoutingBlocksMoveDown" xml:space="preserve">
+    <value>下移</value>
   </data>
 </root>

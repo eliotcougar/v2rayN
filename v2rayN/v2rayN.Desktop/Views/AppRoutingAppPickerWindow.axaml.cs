@@ -1,9 +1,9 @@
-using Avalonia.VisualTree;
+﻿using Avalonia.VisualTree;
 using v2rayN.Desktop.Base;
 
 namespace v2rayN.Desktop.Views;
 
-public partial class AppRoutingAppPickerWindow : WindowBase<AppRoutingViewModel>
+public partial class AppRoutingAppPickerWindow : WindowBase<AppRoutingProcessViewModel>
 {
     public AppRoutingAppPickerWindow()
     {

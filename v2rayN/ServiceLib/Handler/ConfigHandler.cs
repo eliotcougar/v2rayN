@@ -6,6 +6,7 @@ public static class ConfigHandler
 {
     private static readonly string _configRes = Global.ConfigFileName;
     private static readonly string _tag = "ConfigHandler";
+    private static readonly SemaphoreSlim _saveGate = new(1, 1);
 
     #region ConfigHandler
 
@@ -204,6 +205,9 @@ public static class ConfigHandler
     /// <returns>0 if successful, -1 if failed</returns>
     public static async Task<int> SaveConfig(Config config)
     {
+        // Interface discovery can save from a background worker while the UI saves.
+        // Serialize both the snapshot and replacement of the shared temporary file.
+        await _saveGate.WaitAsync();
         try
         {
             //save temp file
@@ -225,6 +229,7 @@ public static class ConfigHandler
             Logging.SaveLog(_tag, ex);
             return -1;
         }
+        finally { _saveGate.Release(); }
 
         return 0;
     }

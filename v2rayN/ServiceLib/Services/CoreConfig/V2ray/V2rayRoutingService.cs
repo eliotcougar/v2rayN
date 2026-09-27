@@ -1,8 +1,8 @@
-namespace ServiceLib.Services.CoreConfig;
+﻿namespace ServiceLib.Services.CoreConfig;
 
 public partial class CoreConfigV2rayService
 {
-    private void GenRouting()
+    private void GenRouting(RoutingItem? routingOverride = null)
     {
         try
         {
@@ -39,7 +39,7 @@ public partial class CoreConfigV2rayService
             {
                 _coreConfig.routing.domainStrategy = _config.RoutingBasicItem.DomainStrategy;
 
-                var routing = context.RoutingItem;
+                var routing = routingOverride ?? context.RoutingItem;
                 if (routing != null)
                 {
                     if (routing.DomainStrategy.IsNotEmpty())
@@ -49,7 +49,7 @@ public partial class CoreConfigV2rayService
                     var rules = JsonUtils.Deserialize<List<RulesItem>>(routing.RuleSet);
                     foreach (var item in rules)
                     {
-                        if (!item.Enabled)
+                        if (!item.IsEnabled)
                         {
                             continue;
                         }
@@ -59,6 +59,17 @@ public partial class CoreConfigV2rayService
                             continue;
                         }
 
+                        if (item.Blocks != null)
+                        {
+                            var blockRules = CompileBlockRules(item, context.RoutingPackages);
+                            var outbound = GenRoutingUserRuleOutbound(item.OutboundTag ?? Global.ProxyTag);
+                            foreach (var blockRule in blockRules)
+                            {
+                                blockRule.outboundTag = outbound;
+                                _coreConfig.routing.rules.Add(blockRule);
+                            }
+                            continue;
+                        }
                         var item2 = JsonUtils.Deserialize<RulesItem4Ray>(JsonUtils.Serialize(item));
                         GenRoutingUserRule(item2);
                     }
@@ -76,7 +87,9 @@ public partial class CoreConfigV2rayService
                 }
             }
         }
-        catch (Exception ex)
+        // Shared application routing requires every projected branch. Let its caller
+        // reject a failed generation instead of returning a partially built table.
+        catch (Exception ex) when (routingOverride == null)
         {
             Logging.SaveLog(_tag, ex);
         }

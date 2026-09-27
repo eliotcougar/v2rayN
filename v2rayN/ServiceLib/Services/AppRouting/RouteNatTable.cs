@@ -140,11 +140,20 @@ internal sealed class RouteNatTable
         }
     }
 
-    public void Retain(RoutePolicy policy)
+    public bool MayBeReflection(IPAddress local, IPAddress remote)
     {
         lock (_gate)
         {
-            foreach (var entry in _forward.Values.Where(e => !policy.Retains(e.Rule)).ToArray()) { Retire(entry); }
+            return _reverse.Values.Any(e => e.Flow.LocalAddress.GetAddressBytes().AsSpan().SequenceEqual(local.GetAddressBytes()) &&
+                e.Flow.RemoteAddress.GetAddressBytes().AsSpan().SequenceEqual(remote.GetAddressBytes()));
+        }
+    }
+
+    public void Retain(RoutePolicy policy, Func<RouteNatEntry, bool>? retainInterface = null)
+    {
+        lock (_gate)
+        {
+            foreach (var entry in _forward.Values.Where(e => !policy.Retains(e.Rule) || retainInterface?.Invoke(e) == false).ToArray()) { Retire(entry); }
         }
     }
 }

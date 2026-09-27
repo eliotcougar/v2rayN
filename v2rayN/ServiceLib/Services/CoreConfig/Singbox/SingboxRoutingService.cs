@@ -257,7 +257,7 @@ public partial class CoreConfigSingboxService
                 var rules = JsonUtils.Deserialize<List<RulesItem>>(routing.RuleSet);
                 foreach (var item1 in rules ?? [])
                 {
-                    if (!item1.Enabled)
+                    if (!item1.IsEnabled)
                     {
                         continue;
                     }
@@ -269,7 +269,7 @@ public partial class CoreConfigSingboxService
 
                     GenRoutingUserRule(item1);
 
-                    if (item1.Ip?.Count > 0)
+                    if (item1.Ip?.Count > 0 || RoutingBlockRules.Values(item1, RoutingSelector.IP).Count > 0)
                     {
                         ipRules.Add(item1);
                     }
@@ -338,6 +338,16 @@ public partial class CoreConfigSingboxService
         {
             if (item == null)
             {
+                return;
+            }
+            if (item.Blocks != null)
+            {
+                var blockRule = CompileBlockRule(item, context.RoutingPackages, context.IsWindows);
+                if (blockRule != null)
+                {
+                    if (blockRule.outbound != null) { blockRule.outbound = GenRoutingUserRuleOutbound(blockRule.outbound); }
+                    _coreConfig.route.rules.Add(blockRule);
+                }
                 return;
             }
             item.OutboundTag = GenRoutingUserRuleOutbound(item.OutboundTag ?? Global.ProxyTag);

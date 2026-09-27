@@ -15,6 +15,8 @@ public partial class CoreConfigSingboxService(CoreConfigContext context)
         var ret = new RetResult();
         try
         {
+            foreach (var rule in RoutingBlockRules.Read(context.RoutingItem?.RuleSet).Where(r => r.IsEnabled && r.Blocks != null))
+            { CompileBlockRule(rule, context.RoutingPackages, context.IsWindows); }
             if (_node == null
                 || !_node.IsValid())
             {

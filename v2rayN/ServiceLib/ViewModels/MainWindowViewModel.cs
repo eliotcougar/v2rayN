@@ -52,7 +52,6 @@ public partial class MainWindowViewModel : MyReactiveObject
     public ReactiveCommand<RxVoid, RxVoid> OptionSettingCmd { get; }
 
     public ReactiveCommand<RxVoid, RxVoid> RoutingSettingCmd { get; }
-    public ReactiveCommand<RxVoid, RxVoid> AppRoutingCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> DNSSettingCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> FullConfigTemplateCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> GlobalHotkeySettingCmd { get; }
@@ -202,13 +201,6 @@ public partial class MainWindowViewModel : MyReactiveObject
         {
             await RoutingSettingAsync();
         });
-        AppRoutingCmd = ReactiveCommand.CreateFromTask(async () =>
-        {
-            if (!Utils.IsWindows()) return;
-            using var viewModel = new AppRoutingViewModel();
-            await viewModel.Initialize();
-            await AppManager.Instance.WindowDialog.ShowDialogAsync(viewModel);
-        });
         DNSSettingCmd = ReactiveCommand.CreateFromTask(async () =>
         {
             await DNSSettingAsync();
@@ -347,16 +339,11 @@ public partial class MainWindowViewModel : MyReactiveObject
         }
         await RefreshServersDispatcherAsync();
 
-        await Reload();
         if (OperatingSystem.IsWindows())
         {
-            try { await Services.AppRouting.AppRoutingLifecycle.RestoreAsync(_config, AppRoutingManager.Instance); }
-            catch (Exception ex)
-            {
-                Logging.SaveLog("Application routing startup", ex);
-                NoticeManager.Instance.Enqueue(ResUI.AppRoutingStartupFailed + ": " + ex.Message);
-            }
+            AppRoutingManager.Instance.Interfaces.Start();
         }
+        await Reload();
     }
 
     #endregion Init
@@ -614,9 +601,10 @@ public partial class MainWindowViewModel : MyReactiveObject
 
     private async Task RoutingSettingAsync()
     {
-        var routingSettingViewModel = new RoutingSettingViewModel();
-        var ret = await AppManager.Instance.WindowDialog.ShowDialogAsync(routingSettingViewModel);
-        if (ret == true)
+        // Apply a saved rule set while the routing list is still open. The existing
+        // reload coordinator coalesces rapid edits and refreshes WinDivert first.
+        // Await the handoff so closing the dialog cannot discard its final edit.
+        var routingSettingViewModel = new RoutingSettingViewModel(async () =>
         {
             await ConfigHandler.InitBuiltinRouting(_config);
             RxSchedulers.MainThreadScheduler.Schedule(async () =>
@@ -624,7 +612,8 @@ public partial class MainWindowViewModel : MyReactiveObject
                 await StatusBarViewModel.RefreshRoutingsMenu();
             });
             await Reload();
-        }
+        });
+        await AppManager.Instance.WindowDialog.ShowDialogAsync(routingSettingViewModel);
     }
 
     private async Task DNSSettingAsync()
@@ -699,12 +688,12 @@ public partial class MainWindowViewModel : MyReactiveObject
 
             try
             {
-                await AppRoutingManager.Instance.RefreshAsync(_config);
+                if (OperatingSystem.IsWindows()) { await AppRoutingManager.Instance.RefreshAsync(_config); }
             }
             catch (Exception ex)
             {
                 Logging.SaveLog("AppRouting reload", ex);
-                NoticeManager.Instance.Enqueue(ResUI.AppRoutingRouteError + ": " + ex.Message);
+                NoticeManager.Instance.SendMessageEx(ResUI.AppRoutingRouteError + ": " + ex.Message);
             }
 
             RxSchedulers.MainThreadScheduler.Schedule(() =>

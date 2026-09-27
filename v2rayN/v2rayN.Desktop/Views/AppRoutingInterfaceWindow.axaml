@@ -1,0 +1,40 @@
+<Window
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vms="clr-namespace:ServiceLib.ViewModels;assembly=ServiceLib"
+    xmlns:resx="clr-namespace:ServiceLib.Resx;assembly=ServiceLib"
+    x:Class="v2rayN.Desktop.Views.AppRoutingInterfaceWindow"
+    x:DataType="vms:AppRoutingInterfaceViewModel" x:CompileBindings="False"
+    Title="{x:Static resx:ResUI.AppRoutingMonitorInterfaces}" Width="700" Height="440"
+    MinWidth="520" MinHeight="320" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="{x:Static resx:ResUI.AppRoutingInterfacesHelp}" TextWrapping="Wrap" Margin="4,0,4,12" />
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="{x:Static resx:ResUI.AppRoutingMonitorNewInterfaces}" VerticalAlignment="Center" Margin="4" />
+                <ToggleSwitch IsChecked="{Binding MonitorNewInterfaces, Mode=TwoWay}" Margin="8,4"
+                    AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingMonitorNewInterfaces}" />
+            </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="btnSave" Content="{x:Static resx:ResUI.TbConfirm}" IsDefault="True" Margin="4,0" Padding="12,6" />
+            <Button x:Name="btnCancel" Content="{x:Static resx:ResUI.TbCancel}" IsCancel="True" Margin="4,0,0,0" Padding="12,6" />
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Interfaces}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <CheckBox IsChecked="{Binding Monitored, Mode=TwoWay}" Height="56" Margin="4,0"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center"
+                            AutomationProperties.Name="{Binding Name}">
+                            <StackPanel Margin="8,0">
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+                                <TextBlock Text="{Binding Details}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Details}" Opacity="0.7" />
+                            </StackPanel>
+                        </CheckBox>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</Window>

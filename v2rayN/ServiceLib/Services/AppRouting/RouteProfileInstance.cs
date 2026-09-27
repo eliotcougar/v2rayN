@@ -1,4 +1,4 @@
-namespace ServiceLib.Services.AppRouting;
+﻿namespace ServiceLib.Services.AppRouting;
 
 [SupportedOSPlatform("windows")]
 internal sealed class RouteProfileInstance : IRouteProfile
@@ -6,11 +6,11 @@ internal sealed class RouteProfileInstance : IRouteProfile
     private readonly ProcessService _process;
     private readonly WindowsJobService _job;
     private readonly string _file;
-    public AppRouteRule Endpoint { get; }
+    public RouteSocksEndpoint Endpoint { get; }
     public int ProcessId => _process.Id;
     public Task Completion { get; }
 
-    private RouteProfileInstance(ProcessService process, WindowsJobService job, string file, AppRouteRule endpoint)
+    private RouteProfileInstance(ProcessService process, WindowsJobService job, string file, RouteSocksEndpoint endpoint)
     {
         _process = process;
         _job = job;
@@ -23,18 +23,13 @@ internal sealed class RouteProfileInstance : IRouteProfile
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        var endpoint = new AppRouteRule
-        {
-            Kind = AppRouteKind.Socks5,
-            SocksPort = ((IPEndPoint)listener.LocalEndpoint).Port,
-            SocksUsername = "app-route",
-            SocksPassword = Convert.ToHexString(RandomNumberGenerator.GetBytes(24))
-        };
+        var endpoint = new RouteSocksEndpoint(((IPEndPoint)listener.LocalEndpoint).Port,
+            "app-route", Convert.ToHexString(RandomNumberGenerator.GetBytes(24)));
         listener.Stop();
         var root = JsonNode.Parse(template)!;
         var inbound = root["inbounds"]![0]!;
-        inbound["port"] = endpoint.SocksPort;
-        inbound["settings"]!["accounts"]![0]!["pass"] = endpoint.SocksPassword;
+        inbound["port"] = endpoint.Port;
+        inbound["settings"]!["accounts"]![0]!["pass"] = endpoint.Password;
         var file = Utils.GetBinConfigPath("app-route-" + Guid.NewGuid().ToString("N") + ".json");
         ProcessService? process = null;
         WindowsJobService? job = null;
@@ -43,7 +38,12 @@ internal sealed class RouteProfileInstance : IRouteProfile
         {
             await File.WriteAllTextAsync(file, root.ToJsonString(), token);
             process = new ProcessService(core, $"run -c \"{file}\"", Path.GetDirectoryName(core)!, true, false, environment,
-                (_, message) => { Logging.SaveLog("AppRouting Xray: " + message); return Task.CompletedTask; });
+                (_, message) =>
+                {
+                    Logging.SaveLog(message);
+                    NoticeManager.Instance.SendMessage(message);
+                    return Task.CompletedTask;
+                });
             job = new WindowsJobService();
             token.ThrowIfCancellationRequested();
             await process.StartAsync();

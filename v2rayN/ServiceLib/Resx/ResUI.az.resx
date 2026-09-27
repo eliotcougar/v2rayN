@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1898,5 +1898,170 @@ Təyin edildikdə sertifikat sabitlənəcək və "Təhlükəsiz olmayan əlaqəy
   </data>
   <data name="TbSortingProcess" xml:space="preserve">
     <value>Proses</value>
+  </data>
+  <data name="AppRoutingMonitorInterfaces" xml:space="preserve">
+    <value>İzlənən interfeyslər</value>
+  </data>
+  <data name="AppRoutingMonitorNewInterfaces" xml:space="preserve">
+    <value>Yeni interfeysləri izlə</value>
+  </data>
+  <data name="AppRoutingInterfacesHelp" xml:space="preserve">
+    <value>Tətbiq marşrutlaşdırma qaydalarını yalnız seçilmiş interfeyslərə tətbiq edin. Yeni interfeyslər ilk aşkarlandıqda keçidin vəziyyətini qəbul edir; mövcud seçimlər saxlanılır. Seçimi dəyişdikdən sonra marşrutlaşdırılan tətbiqləri yenidən başladın.</value>
+  </data>
+  <data name="AppRoutingMonitor" xml:space="preserve">
+    <value>İzlə</value>
+  </data>
+  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
+    <value>Hazırda mövcud deyil</value>
+  </data>
+  <data name="AppRoutingAddProcessRule" xml:space="preserve">
+    <value>Proses qaydası əlavə et</value>
+  </data>
+  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
+    <value>Windows tətbiqi qaydası əlavə et</value>
+  </data>
+  <data name="AppRoutingWindowsApps" xml:space="preserve">
+    <value>Windows tətbiqləri</value>
+  </data>
+  <data name="AppRoutingRuleName" xml:space="preserve">
+    <value>Qaydanın adı</value>
+  </data>
+  <data name="AppRoutingRuleColumn" xml:space="preserve">
+    <value>Tətbiq / qayda</value>
+  </data>
+  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
+    <value>Windows tətbiqlərini redaktə et</value>
+  </data>
+  <data name="AppRoutingPackageSearch" xml:space="preserve">
+    <value>Paketləri axtar</value>
+  </data>
+  <data name="AppRoutingPackageAccount" xml:space="preserve">
+    <value>{0} üçün paketlər</value>
+  </data>
+  <data name="AppRoutingPackageHelp" xml:space="preserve">
+    <value>Seçilmiş hər paketdəki bütün tətbiqlər bu qaydadan istifadə edir. İdxal Windows icazələrini dəyişmədən loopback istisnalarının seçimini kopyalayır. Artıq yerli sistem proksisinə göndərilən trafik həmin proksinin marşrutlaşdırılmasını izləyir.</value>
+  </data>
+  <data name="AppRoutingLoadingPackages" xml:space="preserve">
+    <value>Quraşdırılmış paketlər oxunur…</value>
+  </data>
+  <data name="AppRoutingPackagesSelected" xml:space="preserve">
+    <value>Paketlər: {0}</value>
+  </data>
+  <data name="AppRoutingPackageUnavailable" xml:space="preserve">
+    <value>Bu hesab üçün quraşdırılmayıb</value>
+  </data>
+  <data name="AppRoutingPackageAssigned" xml:space="preserve">
+    <value>Artıq “{0}” qaydasına təyin edilib</value>
+  </data>
+  <data name="AppRoutingPackageRequired" xml:space="preserve">
+    <value>Qaydanın adını daxil edin və ən azı bir paket seçin.</value>
+  </data>
+  <data name="AppRoutingPackageConflict" xml:space="preserve">
+    <value>Hər paket yalnız bir aktiv Windows tətbiqi qaydasına aid ola bilər.</value>
+  </data>
+  <data name="AppRoutingPackageImport" xml:space="preserve">
+    <value>Loopback istisna qaydalarını idxal et</value>
+  </data>
+  <data name="AppRoutingPackageImportResult" xml:space="preserve">
+    <value>Seçilib: {0}. Uyğun gəlməyən istisnalar: {1}. Artıq təyin edilib: {2}. Windows icazələri dəyişdirilməyib.</value>
+  </data>
+  <data name="AppRoutingSelectVisible" xml:space="preserve">
+    <value>Görünənləri seç</value>
+  </data>
+  <data name="AppRoutingClearVisible" xml:space="preserve">
+    <value>Görünənlərin seçimini sil</value>
+  </data>
+  <data name="RoutingBlocksTitle" xml:space="preserve">
+    <value>Routing rule details — block editor (preview)</value>
+  </data>
+  <data name="RoutingBlocksEdit" xml:space="preserve">
+    <value>Edit as blocks (preview)</value>
+  </data>
+  <data name="RoutingBlocksCompatibility" xml:space="preserve">
+    <value>Preview rules are inactive in older v2rayN builds. Their settings are retained unless edited or replaced in the older build.</value>
+  </data>
+  <data name="RoutingBlocksAdd" xml:space="preserve">
+    <value>Add filter</value>
+  </data>
+  <data name="RoutingBlocksRemove" xml:space="preserve">
+    <value>Remove filter</value>
+  </data>
+  <data name="RoutingBlocksAnd" xml:space="preserve">
+    <value>AND</value>
+  </data>
+  <data name="RoutingBlocksEmpty" xml:space="preserve">
+    <value>Add at least one filter and fill every block, or remove empty blocks.</value>
+  </data>
+  <data name="RoutingBlocksDnsOnly" xml:space="preserve">
+    <value>DNS rules support a Domain block only. Use Routing for application and connection filters.</value>
+  </data>
+  <data name="RoutingBlocksInvalidPort" xml:space="preserve">
+    <value>Use ports 0–65535 or ranges such as 8000-8080.</value>
+  </data>
+  <data name="RoutingBlocksInvalidNetwork" xml:space="preserve">
+    <value>Select TCP, UDP, or both.</value>
+  </data>
+  <data name="RoutingBlocksOutboundRequired" xml:space="preserve">
+    <value>Select an outbound tag.</value>
+  </data>
+  <data name="RoutingBlocksWindowsOnly" xml:space="preserve">
+    <value>Windows App filters require Windows.</value>
+  </data>
+  <data name="RoutingBlocksDomainHint" xml:space="preserve">
+    <value>Hər sətirdə bir domen. Sətri söndürmək üçün əvvəlinə # yazın.</value>
+  </data>
+  <data name="RoutingBlocksIpHint" xml:space="preserve">
+    <value>Hər sətirdə bir IP, CIDR və ya geoip: dəyəri. Sətri söndürmək üçün əvvəlinə # yazın.</value>
+  </data>
+  <data name="RoutingBlocksPortHint" xml:space="preserve">
+    <value>Təyinat portları/aralıqları, məs. 443, 8000-8080. Tək və ya Şəbəkə ilə WinDivert trafikini seçir. Tam aralıqlar ehtiyat qaydalar olaraq qalır.</value>
+  </data>
+  <data name="RoutingBlocksProcessHint" xml:space="preserve">
+    <value>Tam yol, sonunda / olan qovluq və ya fayl adı daxil edin. Alt proseslər WinDivert marşrutlaşdırmasına aiddir.</value>
+  </data>
+  <data name="RoutingBlocksPackageHint" xml:space="preserve">
+    <value>Aktiv tətbiqlər alternativdir. Uşaq proseslər WinDivert üçündür. Sıralamaq üçün ad sütununun başlığına klikləyin.</value>
+  </data>
+  <data name="RoutingBlocksInboundHint" xml:space="preserve">
+    <value>Mövcud giriş teqləri:</value>
+  </data>
+  <data name="RoutingBlocksValuesHint" xml:space="preserve">
+    <value>Match any of the selected values.</value>
+  </data>
+  <data name="RoutingBlocksProcess" xml:space="preserve">
+    <value>Process</value>
+  </data>
+  <data name="RoutingBlocksWindowsApp" xml:space="preserve">
+    <value>Windows App</value>
+  </data>
+  <data name="RoutingBlocksInboundTag" xml:space="preserve">
+    <value>Inbound Tag</value>
+  </data>
+  <data name="RoutingBlocksNetwork" xml:space="preserve">
+    <value>Network</value>
+  </data>
+  <data name="RoutingBlocksProtocol" xml:space="preserve">
+    <value>Protocol</value>
+  </data>
+  <data name="RoutingBlocksOutboundTag" xml:space="preserve">
+    <value>Outbound tag</value>
+  </data>
+  <data name="RoutingBlocksOr" xml:space="preserve">
+    <value>OR</value>
+  </data>
+  <data name="RoutingBlocksFullPath" xml:space="preserve">
+    <value>Tam yol</value>
+  </data>
+  <data name="RoutingBlocksFolder" xml:space="preserve">
+    <value>Qovluq</value>
+  </data>
+  <data name="RoutingBlocksExecutable" xml:space="preserve">
+    <value>İcra faylı</value>
+  </data>
+  <data name="RoutingBlocksMoveUp" xml:space="preserve">
+    <value>Yuxarı</value>
+  </data>
+  <data name="RoutingBlocksMoveDown" xml:space="preserve">
+    <value>Aşağı</value>
   </data>
 </root>

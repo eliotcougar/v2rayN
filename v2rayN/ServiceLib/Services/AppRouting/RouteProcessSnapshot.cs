@@ -8,7 +8,7 @@ internal sealed class RouteProcessSnapshot : IDisposable
 {
     private readonly Dictionary<int, (RouteProcessInfo Info, SafeProcessHandle Handle)> _processes = [];
 
-    public List<RouteProcessInfo> Read()
+    public List<RouteProcessInfo> Read(bool packageIdentity = false)
     {
         var result = new List<RouteProcessInfo>();
         // Retained handles allow an already observed parent's children to inherit after it exits.
@@ -17,7 +17,13 @@ internal sealed class RouteProcessSnapshot : IDisposable
             var wait = WaitForSingleObject(tracked.Handle, 0);
             if (wait == 258)
             {
-                result.Add(tracked.Info);
+                var info = tracked.Info;
+                if (packageIdentity && info.PackageFamily == null)
+                {
+                    info = info with { PackageFamily = RoutePackageIdentity.Read(tracked.Handle) };
+                    _processes[pid] = (info, tracked.Handle);
+                }
+                result.Add(info);
                 continue;
             } // WAIT_TIMEOUT: still alive
             if (wait != 0 || !GetProcessTimes(tracked.Handle, out _, out var exited, out _, out _))
@@ -67,7 +73,8 @@ internal sealed class RouteProcessSnapshot : IDisposable
                 var length = path.Capacity;
                 var fullPath = QueryFullProcessImageName(handle, 0, path, ref length) ? path.ToString() : null;
                 var info = new RouteProcessInfo(new(pid, started), checked((int)entry.ParentPid),
-                    fullPath == null ? entry.Name : Path.GetFileName(fullPath), fullPath);
+                    fullPath == null ? entry.Name : Path.GetFileName(fullPath), fullPath,
+                    PackageFamily: packageIdentity ? RoutePackageIdentity.Read(handle) : null);
                 _processes.Add(pid, (info, handle));
                 retained = true;
                 result.Add(info);

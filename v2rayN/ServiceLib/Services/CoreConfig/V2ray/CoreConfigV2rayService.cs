@@ -1,4 +1,4 @@
-namespace ServiceLib.Services.CoreConfig;
+﻿namespace ServiceLib.Services.CoreConfig;
 
 public partial class CoreConfigV2rayService(CoreConfigContext context)
 {
@@ -15,6 +15,7 @@ public partial class CoreConfigV2rayService(CoreConfigContext context)
         var ret = new RetResult();
         try
         {
+            ValidateBlockRules();
             if (_node == null
                 || !_node.IsValid())
             {
@@ -229,11 +230,12 @@ public partial class CoreConfigV2rayService(CoreConfigContext context)
         => GenerateClientSocksConfig(port, false);
 
     // A single-profile listener, optionally using the routing rules in its context.
-    internal RetResult GenerateClientSocksConfig(int port, bool useRoutingRules)
+    internal RetResult GenerateClientSocksConfig(int port, bool useRoutingRules, RoutingItem? routingOverride = null)
     {
         var ret = new RetResult();
         try
         {
+            if (useRoutingRules) { ValidateBlockRules(); }
             if (_node == null
                 || !_node.IsValid())
             {
@@ -282,8 +284,9 @@ public partial class CoreConfigV2rayService(CoreConfigContext context)
 
             if (useRoutingRules)
             {
-                GenRouting();
+                GenRouting(routingOverride);
             }
+            if (routingOverride != null) { GenDns(); }
             _coreConfig.routing.rules.Add(BuildFinalRule());
 
             if (_config.CoreBasicItem.EnableFragment)
@@ -305,7 +308,8 @@ public partial class CoreConfigV2rayService(CoreConfigContext context)
         catch (Exception ex)
         {
             Logging.SaveLog(_tag, ex);
-            ret.Msg = ResUI.FailedGenDefaultConfiguration;
+            ret.Msg = routingOverride == null ? ResUI.FailedGenDefaultConfiguration
+                : $"{ResUI.FailedGenDefaultConfiguration}: {ex.Message}";
             return ret;
         }
     }

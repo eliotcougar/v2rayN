@@ -1,11 +1,11 @@
-<base:WindowBase
+﻿<base:WindowBase
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:base="clr-namespace:v2rayN.Base"
     xmlns:vms="clr-namespace:ServiceLib.ViewModels;assembly=ServiceLib"
     xmlns:resx="clr-namespace:ServiceLib.Resx;assembly=ServiceLib"
     x:Class="v2rayN.Views.AppRoutingAppPickerWindow"
-    x:TypeArguments="vms:AppRoutingViewModel" Style="{StaticResource WindowGlobal}"
+    x:TypeArguments="vms:AppRoutingProcessViewModel" Style="{StaticResource WindowGlobal}"
     Title="{x:Static resx:ResUI.AppRoutingNetworkApps}" Width="820" Height="480"
     MinWidth="640" MinHeight="360" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
     <DockPanel Margin="16">

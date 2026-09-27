@@ -22,6 +22,7 @@ public partial class RoutingRuleSettingViewModel : MyReactiveObject, ICloseable
     public IList<RulesItemModel> SelectedSources { get; set; }
 
     public ReactiveCommand<RxVoid, RxVoid> RuleAddCmd { get; }
+    public ReactiveCommand<RxVoid, RxVoid> RuleEditBlocksCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> ImportRulesFromFileCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> ImportRulesFromClipboardCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> ImportRulesFromUrlCmd { get; }
@@ -46,6 +47,7 @@ public partial class RoutingRuleSettingViewModel : MyReactiveObject, ICloseable
         {
             await RuleEditAsync(true);
         });
+        RuleEditBlocksCmd = ReactiveCommand.CreateFromTask(() => RuleEditAsync(false, true), canEditRemove);
         ImportRulesFromFileCmd = ReactiveCommand.CreateFromTask(async () =>
         {
             var fileName = await BrowseRulesFileInteraction.HandleSafe(RxVoid.Default);
@@ -113,15 +115,20 @@ public partial class RoutingRuleSettingViewModel : MyReactiveObject, ICloseable
                 Protocols = Utils.List2String(item.Protocol),
                 InboundTags = Utils.List2String(item.InboundTag),
                 Domains = Utils.List2String((item.Domain ?? []).Concat(item.Ip ?? []).ToList().Concat(item.Process ?? []).ToList()),
-                Enabled = item.Enabled,
+                Enabled = item.IsEnabled,
                 Remarks = item.Remarks,
             };
+            if (item.Blocks != null)
+            {
+                it.Domains = RoutingBlockRules.Describe(item.Blocks, f => $"{RoutingFilterViewModel.TitleFor(f.Selector)} ({string.Join(" | ", f.Values)})");
+                it.InboundTags = ""; // The legacy fallback tag is not an actual selector.
+            }
             models.Add(it);
         }
         RulesItems.ReplaceRange(models);
     }
 
-    public async Task RuleEditAsync(bool blNew)
+    public async Task RuleEditAsync(bool blNew, bool useBlocks = false)
     {
         RulesItem? item;
         if (blNew)
@@ -136,8 +143,10 @@ public partial class RoutingRuleSettingViewModel : MyReactiveObject, ICloseable
                 return;
             }
         }
-        var routingRuleDetailsViewModel = new RoutingRuleDetailsViewModel(item);
-        if (await AppManager.Instance.WindowDialog.ShowDialogAsync(routingRuleDetailsViewModel) == true)
+        var accepted = blNew || useBlocks || item.Blocks != null
+            ? await AppManager.Instance.WindowDialog.ShowDialogAsync(new RoutingRuleBlocksViewModel(item))
+            : await AppManager.Instance.WindowDialog.ShowDialogAsync(new RoutingRuleDetailsViewModel(item));
+        if (accepted == true)
         {
             if (blNew)
             {

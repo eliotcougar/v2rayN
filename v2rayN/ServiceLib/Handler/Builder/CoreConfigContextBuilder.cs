@@ -62,9 +62,19 @@ public class CoreConfigContextBuilder
         validatorResult.Warnings.AddRange(nodeValidatorResult.Warnings);
         if (!(context.RoutingItem?.RuleSet.IsNullOrEmpty() ?? true))
         {
-            var rules = JsonUtils.Deserialize<List<RulesItem>>(context.RoutingItem?.RuleSet) ?? [];
+            List<RulesItem> rules;
+            try
+            {
+                rules = RoutingBlockRules.Read(context.RoutingItem.RuleSet);
+                context = context with { RoutingPackages = await Task.Run(() => RoutingPackageSnapshot.Read(rules)) };
+            }
+            catch (Exception ex)
+            {
+                validatorResult.Errors.Add(ex.Message);
+                return new(context, validatorResult);
+            }
             foreach (var ruleItem in rules.Where(ruleItem =>
-                         ruleItem.Enabled && !Global.OutboundTags.Contains(ruleItem.OutboundTag)))
+                         ruleItem.IsEnabled && !Global.OutboundTags.Contains(ruleItem.OutboundTag)))
             {
                 if (ruleItem.OutboundTag.IsNullOrEmpty())
                 {

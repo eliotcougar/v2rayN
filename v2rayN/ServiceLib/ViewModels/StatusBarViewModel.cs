@@ -432,7 +432,7 @@ public partial class StatusBarViewModel : MyReactiveObject
         if (EnableTun && AppRoutingManager.Instance.IsRunning)
         {
             EnableTun = false;
-            NoticeManager.Instance.Enqueue(ResUI.AppRoutingTunConflict);
+            NoticeManager.Instance.SendMessageEx(ResUI.AppRoutingTunConflict);
             return;
         }
         if (_config.TunModeItem.EnableTun == EnableTun)

@@ -2,6 +2,15 @@ namespace ServiceLib.Services.CoreConfig;
 
 public partial class CoreConfigSingboxService
 {
+    private static IEnumerable<Rule4Sbox> Descendants(IEnumerable<Rule4Sbox> rules)
+    {
+        foreach (var rule in rules)
+        {
+            yield return rule;
+            foreach (var child in Descendants(rule.rules ?? [])) { yield return child; }
+        }
+    }
+
     private void ConvertGeo2Ruleset()
     {
         static void AddRuleSets(List<string> ruleSets, List<string>? rule_set)
@@ -16,14 +25,15 @@ public partial class CoreConfigSingboxService
         var ruleSets = new List<string>();
 
         //convert route geosite & geoip to ruleset
-        foreach (var rule in _coreConfig.route.rules.Where(t => t.geosite?.Count > 0).ToList() ?? [])
+        var routeRules = Descendants(_coreConfig.route.rules).ToList();
+        foreach (var rule in routeRules.Where(t => t.geosite?.Count > 0))
         {
             rule.rule_set ??= [];
             rule.rule_set.AddRange(rule?.geosite?.Select(t => $"{geosite}-{t}").ToList() ?? []);
             rule.geosite = null;
             AddRuleSets(ruleSets, rule.rule_set);
         }
-        foreach (var rule in _coreConfig.route.rules.Where(t => t.geoip?.Count > 0).ToList() ?? [])
+        foreach (var rule in routeRules.Where(t => t.geoip?.Count > 0))
         {
             rule.rule_set ??= [];
             rule.rule_set.AddRange(rule?.geoip?.Select(t => $"{geoip}-{t}").ToList() ?? []);

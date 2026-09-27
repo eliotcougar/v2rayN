@@ -117,10 +117,12 @@ public partial class OptionSettingViewModel : MyReactiveObject, ICloseable
     #endregion CoreType
 
     public ReactiveCommand<RxVoid, RxVoid> SaveCmd { get; }
+    public AppRoutingSettingsViewModel ApplicationRouting { get; }
 
     public OptionSettingViewModel()
     {
         _config = AppManager.Instance.Config;
+        ApplicationRouting = new(_config, Utils.IsAdministrator(), OperatingSystem.IsWindows() ? AppRoutingManager.Instance.Interfaces : null);
         BlIsWindows = Utils.IsWindows();
         BlIsLinux = Utils.IsLinux();
         BlIsIsMacOS = Utils.IsMacOS();
@@ -397,7 +399,7 @@ public partial class OptionSettingViewModel : MyReactiveObject, ICloseable
         //coreType
         await SaveCoreType();
 
-        if (await ConfigHandler.SaveConfig(_config) == 0)
+        if (await ApplicationRouting.SaveAsync(ConfigHandler.SaveConfig) == 0)
         {
             await AutoStartupHandler.UpdateTask(_config);
             AppManager.Instance.Reset();

@@ -16,4 +16,10 @@ public class RulesItem
     public bool Enabled { get; set; } = true;
     public string? Remarks { get; set; }
     public ERuleType? RuleType { get; set; }
+
+    // The legacy fields remain an inactive fallback. Older clients ignore this extension.
+    public RoutingRuleBlocks? Blocks { get; set; }
+
+    [JsonIgnore]
+    public bool IsEnabled => Blocks?.Enabled ?? Enabled;
 }

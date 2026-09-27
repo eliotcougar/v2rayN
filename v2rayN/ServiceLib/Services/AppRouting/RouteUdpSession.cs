@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Threading.Channels;
 
 namespace ServiceLib.Services.AppRouting;
@@ -9,7 +9,7 @@ internal sealed class RouteUdpSession : IDisposable
     internal delegate void Reply(IPEndPoint peer, ReadOnlySpan<byte> payload);
     private const int MaxQueuedBytes = 64 * 1024;
     private readonly CancellationTokenSource _stop;
-    private readonly record struct Datagram(IPEndPoint Destination, byte[] Bytes, int Length, int PayloadLength);
+    private readonly record struct Datagram(byte[] Bytes, int Length, int PayloadLength);
     private readonly ArrayPool<byte> _buffers;
     private readonly Channel<Datagram> _queue = Channel.CreateBounded<Datagram>(new BoundedChannelOptions(64)
     {
@@ -23,23 +23,25 @@ internal sealed class RouteUdpSession : IDisposable
     private readonly IPEndPoint _destination;
     private readonly Reply _reply;
     private readonly Func<bool> _ownsFlow;
+    private readonly Func<bool> _canSend;
     private Socket? _socket;
     private Socket? _control;
     public Task Completion
     {
         get;
     }
-    public bool IsUsable => !Completion.IsCompleted && _ownsFlow();
+    public bool IsUsable => !Completion.IsCompleted && _canSend();
     private long _lastActivity = Environment.TickCount64;
     public long LastActivity => Interlocked.Read(ref _lastActivity);
 
     public RouteUdpSession(AppRouteRule rule, IPEndPoint destination, Reply reply, CancellationToken token, Action<Exception> error,
-        Func<bool> ownsFlow, ArrayPool<byte>? buffers = null)
+        Func<bool> ownsFlow, ArrayPool<byte>? buffers = null, Func<bool>? canSend = null)
     {
         _rule = rule;
         _destination = destination;
         _reply = reply;
         _ownsFlow = ownsFlow;
+        _canSend = canSend ?? ownsFlow;
         _buffers = buffers ?? ArrayPool<byte>.Shared;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(token);
         Completion = Run(error);
@@ -58,15 +60,14 @@ internal sealed class RouteUdpSession : IDisposable
         {
             return;
         }
-        var header = _rule.Kind == AppRouteKind.Interface ? 0 : RouteConnector.DatagramHeaderLength(destination);
+        var header = RouteConnector.DatagramHeaderLength(destination);
         var bytes = _buffers.Rent(header + payload.Length);
         var queued = false;
         try
         {
-            if (header == 0) { payload.CopyTo(bytes); }
-            else { RouteConnector.WriteDatagram(bytes, destination, payload); }
+            RouteConnector.WriteDatagram(bytes, destination, payload);
             Interlocked.Add(ref _queuedBytes, payload.Length);
-            queued = _queue.Writer.TryWrite(new(destination, bytes, header + payload.Length, payload.Length));
+            queued = _queue.Writer.TryWrite(new(bytes, header + payload.Length, payload.Length));
             if (!queued) { Interlocked.Add(ref _queuedBytes, -payload.Length); }
         }
         finally { if (!queued) { _buffers.Return(bytes); } }
@@ -78,32 +79,25 @@ internal sealed class RouteUdpSession : IDisposable
         {
             using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
             connectTimeout.CancelAfter(TimeSpan.FromSeconds(15));
-            if (_rule.Kind == AppRouteKind.Interface)
+            _control = await RouteConnector.ConnectProxy(_rule, connectTimeout.Token);
+            var local = ((IPEndPoint)_control.LocalEndPoint!).Address;
+            if (local.IsIPv4MappedToIPv6)
             {
-                _socket = RouteConnector.CreateInterfaceSocket(_rule, _destination, ProtocolType.Udp);
+                local = local.MapToIPv4();
             }
-            else
+
+            _socket = new Socket(local.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+            _socket.Bind(new IPEndPoint(local, 0));
+            var relay = await RouteConnector.Request(_control, 3, (IPEndPoint)_socket.LocalEndPoint!, connectTimeout.Token);
+            if (relay is IPEndPoint ipRelay && ipRelay.AddressFamily != _socket.AddressFamily)
             {
-                _control = await RouteConnector.ConnectProxy(_rule, connectTimeout.Token);
-                var local = ((IPEndPoint)_control.LocalEndPoint!).Address;
-                if (local.IsIPv4MappedToIPv6)
-                {
-                    local = local.MapToIPv4();
-                }
-
-                _socket = new Socket(local.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
-                _socket.Bind(new IPEndPoint(local, 0));
-                var relay = await RouteConnector.Request(_control, 3, (IPEndPoint)_socket.LocalEndPoint!, connectTimeout.Token);
-                if (relay is IPEndPoint ipRelay && ipRelay.AddressFamily != _socket.AddressFamily)
-                {
-                    throw new IOException("Invalid SOCKS5 UDP relay endpoint.");
-                }
-
-                await _socket.ConnectAsync(relay, connectTimeout.Token);
+                throw new IOException("Invalid SOCKS5 UDP relay endpoint.");
             }
+
+            await _socket.ConnectAsync(relay, connectTimeout.Token);
             var receive = Receive();
             var send = SendLoop(error);
-            var control = _control == null ? Task.Delay(Timeout.Infinite, _stop.Token) : WatchControl();
+            var control = WatchControl();
             try
             {
                 var completed = await Task.WhenAny(receive, send, control);
@@ -152,23 +146,12 @@ internal sealed class RouteUdpSession : IDisposable
             Interlocked.Add(ref _queuedBytes, -datagram.PayloadLength);
             try
             {
-                // An association can take time to open; queued packets must not outlive their owner.
-                if (!_ownsFlow()) { return; }
+                // Capture already attributed these datagrams. A sender may exit during
+                // proxy setup; rule/interface revocation still cancels sending. Replies
+                // always require current socket ownership through the separate predicate.
+                if (!_canSend()) { return; }
                 var bytes = datagram.Bytes.AsMemory(0, datagram.Length);
-                if (_rule.Kind == AppRouteKind.Interface)
-                {
-                    var destination = datagram.Destination;
-                    if (destination.Address.IsIPv6LinkLocal)
-                    {
-                        var scope = ((IPEndPoint)_socket!.LocalEndPoint!).Address.ScopeId;
-                        destination = new(new IPAddress(destination.Address.GetAddressBytes(), scope), destination.Port);
-                    }
-                    await _socket!.SendToAsync(bytes, SocketFlags.None, destination, _stop.Token);
-                }
-                else
-                {
-                    await _socket!.SendAsync(bytes, SocketFlags.None, _stop.Token);
-                }
+                await _socket!.SendAsync(bytes, SocketFlags.None, _stop.Token);
             }
             // MessageSize rejects this datagram without damaging the association.
             // Other socket errors still end the session through Run's supervision.
@@ -182,21 +165,8 @@ internal sealed class RouteUdpSession : IDisposable
         var bytes = new byte[65535];
         while (!_stop.IsCancellationRequested)
         {
-            int count, offset;
-            IPEndPoint? peer;
-            if (_rule.Kind == AppRouteKind.Interface)
-            {
-                var any = _destination.AddressFamily == AddressFamily.InterNetwork ? IPAddress.Any : IPAddress.IPv6Any;
-                var received = await _socket!.ReceiveFromAsync(bytes, SocketFlags.None, new IPEndPoint(any, 0), _stop.Token);
-                count = received.ReceivedBytes;
-                peer = (IPEndPoint)received.RemoteEndPoint;
-                offset = 0;
-            }
-            else
-            {
-                count = await _socket!.ReceiveAsync(bytes, SocketFlags.None, _stop.Token);
-                offset = RouteConnector.UnwrapDatagram(bytes.AsSpan(0, count), out peer);
-            }
+            var count = await _socket!.ReceiveAsync(bytes, SocketFlags.None, _stop.Token);
+            var offset = RouteConnector.UnwrapDatagram(bytes.AsSpan(0, count), out var peer);
             if (offset < 0 || peer?.AddressFamily != _destination.AddressFamily)
             {
                 continue;
@@ -204,7 +174,9 @@ internal sealed class RouteUdpSession : IDisposable
 
             if (!_ownsFlow())
             {
-                return;
+                // A late reply must not cancel already-attributed outbound datagrams.
+                if (!_canSend()) { return; }
+                continue;
             }
 
             Interlocked.Exchange(ref _lastActivity, Environment.TickCount64);

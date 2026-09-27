@@ -3,6 +3,7 @@ namespace ServiceLib.ViewModels;
 public partial class RoutingSettingViewModel : MyReactiveObject
 {
     public Interaction<string, bool> ShowYesNoInteraction { get; } = new();
+    private readonly Func<Task>? _reload;
 
     #region Reactive
 
@@ -28,8 +29,11 @@ public partial class RoutingSettingViewModel : MyReactiveObject
 
     #endregion Reactive
 
-    public RoutingSettingViewModel()
+    public RoutingSettingViewModel() : this(null) { }
+
+    internal RoutingSettingViewModel(Func<Task>? reload)
     {
+        _reload = reload;
         _config = AppManager.Instance.Config;
 
         var canEditRemove = this.WhenAnyValue(
@@ -63,7 +67,6 @@ public partial class RoutingSettingViewModel : MyReactiveObject
             .DistinctUntilChanged()
             .SubscribeAsync(async x =>
             {
-                IsModified = true;
                 await SaveSettingsAsync();
             });
     }
@@ -111,7 +114,13 @@ public partial class RoutingSettingViewModel : MyReactiveObject
     {
         _config.RoutingBasicItem.DomainStrategy = DomainStrategy;
         _config.RoutingBasicItem.DomainStrategy4Singbox = DomainStrategy4Singbox;
-        await ConfigHandler.SaveConfig(_config);
+        if (await ConfigHandler.SaveConfig(_config) == 0) { await ApplyChanges(); }
+    }
+
+    private async Task ApplyChanges()
+    {
+        IsModified = true;
+        if (_reload != null) { await _reload(); }
     }
 
     #endregion Refresh Save
@@ -135,7 +144,7 @@ public partial class RoutingSettingViewModel : MyReactiveObject
         if (await AppManager.Instance.WindowDialog.ShowDialogAsync(routingRuleSettingViewModel) == true)
         {
             await RefreshRoutingItems();
-            IsModified = true;
+            await ApplyChanges();
         }
     }
 
@@ -160,7 +169,7 @@ public partial class RoutingSettingViewModel : MyReactiveObject
         }
 
         await RefreshRoutingItems();
-        IsModified = true;
+        await ApplyChanges();
     }
 
     public async Task RoutingAdvancedSetDefault()
@@ -175,7 +184,7 @@ public partial class RoutingSettingViewModel : MyReactiveObject
         if (await ConfigHandler.SetDefaultRouting(_config, item) == 0)
         {
             await RefreshRoutingItems();
-            IsModified = true;
+            await ApplyChanges();
         }
     }
 
@@ -184,7 +193,7 @@ public partial class RoutingSettingViewModel : MyReactiveObject
         if (await ConfigHandler.InitRouting(_config, true) == 0)
         {
             await RefreshRoutingItems();
-            IsModified = true;
+            await ApplyChanges();
         }
     }
 }

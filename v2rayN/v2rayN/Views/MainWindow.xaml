@@ -191,10 +191,6 @@
                                     Height="{StaticResource MenuItemHeight}"
                                     Header="{x:Static resx:ResUI.menuRoutingSetting}" />
                                 <MenuItem
-                                    x:Name="menuAppRouting"
-                                    Height="{StaticResource MenuItemHeight}"
-                                    Header="{x:Static resx:ResUI.AppRoutingTitle}" />
-                                <MenuItem
                                     x:Name="menuDNSSetting"
                                     Height="{StaticResource MenuItemHeight}"
                                     Header="{x:Static resx:ResUI.menuDNSSetting}" />

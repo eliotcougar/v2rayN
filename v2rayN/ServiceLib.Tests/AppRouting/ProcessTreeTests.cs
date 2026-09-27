@@ -1,4 +1,4 @@
-using ServiceLib.Services.AppRouting;
+﻿using ServiceLib.Services.AppRouting;
 
 namespace ServiceLib.Tests.AppRouting;
 
@@ -9,7 +9,7 @@ public class ProcessTreeTests
         ExecutablePath = name,
         MatchByName = true,
         IncludeChildProcesses = children,
-        Kind = AppRouteKind.Socks5
+        Kind = AppRouteKind.ActiveProfile
     };
     private static RouteProcessInfo Process(int pid, long started, int parent, string name, long? exited = null) =>
         new(new(pid, started), parent, name, null, exited);

@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Threading.Channels;
 using ServiceLib.Services.AppRouting;
 
@@ -44,7 +44,7 @@ public class UdpSessionTests
             }
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Socks5, SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port },
+        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
             destination, (peer, payload) => replies.Writer.TryWrite((peer, payload.ToArray())), timeout.Token, errors.Enqueue, () => true, pool);
         try
         {
@@ -95,7 +95,7 @@ public class UdpSessionTests
             if (failAssociation) { await stream.WriteAsync(new byte[] { 5, 255 }, timeout.Token); }
             else { await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0); }
         });
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Socks5, SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port },
+        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
             new(IPAddress.Loopback, 443), (_, _) => { }, timeout.Token, errors.Add, () => true, pool);
         await greetingRead.Task.WaitAsync(timeout.Token);
         for (var i = 0; i < 65; i++) { session.Send(new(IPAddress.Loopback, 443), [1]); }
@@ -143,7 +143,7 @@ public class UdpSessionTests
             await udp.SendAsync(RouteConnector.WrapDatagram(replyingPeer, new byte[] { 3 }), one.RemoteEndPoint, timeout.Token);
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Socks5, SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port }, first,
+        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) }, first,
             (peer, _) => received.TrySetResult(peer), timeout.Token, ex => received.TrySetException(ex), () => true, pool);
         try
         {
@@ -198,8 +198,8 @@ public class UdpSessionTests
         });
         using var session = new RouteUdpSession(new()
         {
-            Kind = AppRouteKind.Socks5,
-            SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port
+            Kind = AppRouteKind.Profile,
+            ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port)
         }, destination, (_, _) => { }, timeout.Token, ex => drained.TrySetException(ex), () => true);
         try
         {
@@ -254,7 +254,7 @@ public class UdpSessionTests
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
         var destination = new IPEndPoint(PacketTests.Flow(ipv6).RemoteAddress, 443);
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Socks5, SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port },
+        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
             destination, (_, _) => { }, timeout.Token, errors.Add, () => true, pool);
         // The SOCKS header makes this too large for the outer IPv4 UDP socket.
         try
@@ -309,8 +309,8 @@ public class UdpSessionTests
         var errors = new List<Exception>();
         using var session = new RouteUdpSession(new()
         {
-            Kind = AppRouteKind.Socks5,
-            SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port
+            Kind = AppRouteKind.Profile,
+            ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port)
         }, new(IPAddress.Loopback, 12345), (_, _) => { }, timeout.Token, errors.Add, () => Volatile.Read(ref ownsFlow) != 0, pool);
         session.Send(new(IPAddress.Loopback, 12345), [1, 2, 3]);
         session.Send(new(IPAddress.Loopback, 12345), [4, 5, 6]);
@@ -320,6 +320,64 @@ public class UdpSessionTests
         await udp.Available.Should().BeEqualTo(0);
         await errors.Count.Should().BeEqualTo(0);
         await pool.Rents.Should().BeEqualTo(2);
+        await pool.Outstanding.Should().BeEqualTo(0);
+    }
+
+    [Test]
+    public async Task PreviouslyAttributedDatagramsSurviveSenderExitAndDiscardedReplies()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var tcp = new TcpListener(IPAddress.Loopback, 0);
+        using var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        tcp.Start();
+        var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replies = 0;
+        var pool = new TrackingBytePool();
+        var errors = new ConcurrentQueue<Exception>();
+        var destination = new IPEndPoint(IPAddress.Loopback, 12345);
+        var checkedReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receivedAll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = Task.Run(async () =>
+        {
+            using var client = await tcp.AcceptTcpClientAsync(timeout.Token);
+            using var stream = client.GetStream();
+            await stream.ReadExactlyAsync(new byte[3], timeout.Token);
+            await queued.Task.WaitAsync(timeout.Token);
+            await stream.WriteAsync(new byte[] { 5, 0 }, timeout.Token);
+            await stream.ReadExactlyAsync(new byte[10], timeout.Token);
+            await stream.WriteAsync(new byte[] { 5, 0, 0 }.Concat(RouteConnector.EncodeAddress((IPEndPoint)udp.Client.LocalEndPoint!)).ToArray(), timeout.Token);
+            var packet = await udp.ReceiveAsync(timeout.Token);
+            var offset = RouteConnector.UnwrapDatagram(packet.Buffer, destination);
+            await packet.Buffer.AsSpan(offset).SequenceEqual(new byte[] { 1, 2, 3 }).Should().BeTrue();
+            await udp.SendAsync(packet.Buffer, packet.RemoteEndPoint, timeout.Token);
+            var second = await udp.ReceiveAsync(timeout.Token);
+            var secondOffset = RouteConnector.UnwrapDatagram(second.Buffer, destination);
+            await second.Buffer.AsSpan(secondOffset).SequenceEqual(new byte[] { 4, 5, 6 }).Should().BeTrue();
+            receivedAll.SetResult();
+            try { await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0); }
+            catch (IOException ex) when (ex.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset })
+            {
+                // Disposing the session cancels its pending control read. Windows
+                // may close that socket with RST instead of FIN; both release it.
+            }
+        });
+        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
+            destination, (_, _) => Interlocked.Increment(ref replies), timeout.Token, errors.Enqueue,
+            () => { checkedReply.TrySetResult(); return false; }, pool, canSend: () => true);
+        try
+        {
+            session.Send(destination, [1, 2, 3]);
+            queued.SetResult();
+            await checkedReply.Task.WaitAsync(timeout.Token);
+            session.Send(destination, [4, 5, 6]);
+            await receivedAll.Task.WaitAsync(timeout.Token);
+            session.Dispose();
+            await session.Completion.WaitAsync(timeout.Token);
+            await server.WaitAsync(timeout.Token);
+            await replies.Should().BeEqualTo(0);
+            await errors.IsEmpty.Should().BeTrue();
+        }
+        finally { session.Dispose(); }
         await pool.Outstanding.Should().BeEqualTo(0);
     }
 
@@ -366,8 +424,8 @@ public class UdpSessionTests
             var errors = new List<Exception>();
             using var session = new RouteUdpSession(new()
             {
-                Kind = AppRouteKind.Socks5,
-                SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port
+                Kind = AppRouteKind.Profile,
+                ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port)
             },
                 new(IPAddress.Loopback, 12345), (_, _) => { }, timeout.Token, errors.Add, () => true);
             await session.Completion.WaitAsync(timeout.Token);
@@ -431,7 +489,7 @@ public class UdpSessionTests
                 await (await stream.ReadAsync(one, timeout.Token)).Should().BeEqualTo(0);
                 controlClosed.SetResult();
             });
-            using var session = new RouteUdpSession(new AppRouteRule { Kind = AppRouteKind.Socks5, SocksPort = ((IPEndPoint)tcp.LocalEndpoint).Port },
+            using var session = new RouteUdpSession(new AppRouteRule { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
                 destination, (_, data) => done.TrySetResult(data.ToArray()), timeout.Token, ex => done.TrySetException(ex), () => Volatile.Read(ref ownsFlow) != 0);
             session.Send(destination, payload);
             if (loseOwnership)
@@ -470,16 +528,4 @@ public class UdpSessionTests
         await snapshot.Find(flow).Process!.Value.Pid.Should().BeEqualTo(200);
     }
 
-    [Test]
-    public async Task MissingInterfaceDoesNotFallbackToDefaultRoute()
-    {
-        var rejected = false;
-        try
-        {
-            using var socket = RouteConnector.CreateInterfaceSocket(new AppRouteRule { Kind = AppRouteKind.Interface, InterfaceId = Guid.NewGuid().ToString() },
-                new(IPAddress.Loopback, 9), ProtocolType.Udp);
-        }
-        catch (IOException) { rejected = true; }
-        await rejected.Should().BeTrue();
-    }
 }

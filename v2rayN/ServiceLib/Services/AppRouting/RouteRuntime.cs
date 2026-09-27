@@ -1,4 +1,4 @@
-namespace ServiceLib.Services.AppRouting;
+﻿namespace ServiceLib.Services.AppRouting;
 
 public enum AppRoutingState { Stopped, Starting, Running, Stopping, Faulted }
 
@@ -6,19 +6,21 @@ internal interface IRouteEngine : IAsyncDisposable
 {
     Task<Exception?> Completion { get; }
     // Cancellation/failure is allowed before commit only. A successful return owns the new policy.
-    Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token);
+    Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token, RouteSharedPolicy? shared = null);
     void Start();
 }
 
 internal interface IRouteProfile : IAsyncDisposable
 {
-    AppRouteRule Endpoint { get; }
+    RouteSocksEndpoint Endpoint { get; }
+    RouteSharedPolicy? SharedPolicy => null;
     int ProcessId { get; }
     Task Completion { get; }
 }
 
 internal sealed record RouteProfilePlan(string Key, Func<CancellationToken, Task<IRouteProfile>> Start);
-internal sealed record RouteRuntimePlan(IReadOnlyList<AppRouteRule> Rules, IReadOnlyDictionary<string, RouteProfilePlan> Profiles);
+internal sealed record RouteSharedPlan(string Key, Func<IReadOnlyList<AppRouteRule>, CancellationToken, Task<IRouteProfile>> Start);
+internal sealed record RouteRuntimePlan(IReadOnlyList<AppRouteRule> Rules, IReadOnlyDictionary<string, RouteProfilePlan> Profiles, RouteSharedPlan? Shared = null);
 
 /// <summary>Stages dependencies before applying a policy to one persistent capture engine.
 /// The manager serializes calls; a failed preparation leaves the current runtime intact.</summary>
@@ -59,15 +61,25 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
             foreach (var rule in rules.Where(r => r.Kind == AppRouteKind.Profile))
             {
                 var endpoint = next[plan.Profiles[rule.Id].Key].Endpoint;
-                rule.Kind = AppRouteKind.Socks5;
-                rule.SocksHost = endpoint.SocksHost;
-                rule.SocksPort = endpoint.SocksPort;
-                rule.SocksUsername = endpoint.SocksUsername;
-                rule.SocksPassword = endpoint.SocksPassword;
+                rule.ProxyEndpoint = endpoint;
+            }
+            RouteSharedPolicy? shared = null;
+            if (plan.Shared is { } sharedPlan)
+            {
+                // Endpoint credentials are part of the dependency identity. Never reuse a
+                // bridge whose fallback profiles were replaced during this preparation.
+                var key = sharedPlan.Key + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', rules.Select(RoutePolicy.Signature)))));
+                if (!_profiles.TryGetValue(key, out var instance) || instance.Completion.IsCompleted)
+                {
+                    instance = await sharedPlan.Start(rules, token);
+                    created.Add(key, instance);
+                }
+                next.Add(key, instance);
+                shared = instance.SharedPolicy;
             }
             candidate = _engine == null ? createEngine() : null;
             token.ThrowIfCancellationRequested();
-            await (candidate ?? _engine!).ApplyAsync(rules, next.Values.Select(p => p.ProcessId), token);
+            await (candidate ?? _engine!).ApplyAsync(rules, next.Values.Select(p => p.ProcessId), token, shared);
             // Cancellation after commit belongs to StopAsync, which drains the new policy's resources.
             candidate?.Start();
             // No fallible preparation remains. Publish the new ownership before retiring old cores.

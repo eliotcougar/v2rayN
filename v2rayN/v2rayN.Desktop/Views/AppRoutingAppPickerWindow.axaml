@@ -1,11 +1,11 @@
-<Window
+﻿<Window
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:base="clr-namespace:v2rayN.Desktop.Base"
     xmlns:vms="clr-namespace:ServiceLib.ViewModels;assembly=ServiceLib"
     xmlns:resx="clr-namespace:ServiceLib.Resx;assembly=ServiceLib"
     x:Class="v2rayN.Desktop.Views.AppRoutingAppPickerWindow"
-    x:DataType="vms:AppRoutingViewModel" x:CompileBindings="False"
+    x:DataType="vms:AppRoutingProcessViewModel" x:CompileBindings="False"
     Title="{x:Static resx:ResUI.AppRoutingNetworkApps}" Width="820" Height="480"
     MinWidth="640" MinHeight="360" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
     <DockPanel Margin="16">

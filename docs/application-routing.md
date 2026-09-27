@@ -1,11 +1,16 @@
 # Application routing for Windows
 
-This feature adds **Settings → Application routing** to the WPF and Avalonia
-interfaces. Rules associate an executable's full path or filename with the active
-profile through the main SOCKS proxy, a saved v2rayN profile, an explicit SOCKS5
-endpoint, or an existing Windows network interface.
-The implementation handles TCP streams and UDP datagrams with IPv4 and IPv6
-destinations. QUIC is carried as UDP; there is no TLS interception.
+This feature adds an **Application routing** switch and **Monitored interfaces**
+button to **Settings → v2rayN settings**, immediately after **Double-clicking
+configuration makes it active**, in both WPF and Avalonia. All rules live in the
+ordinary routing table's [block editor](routing-block-editor.md). Process and
+Windows App blocks select applications; standalone Port rules, optionally with
+Network, select destination ports across applications. Full port ranges remain
+fallback rules and never opt every application into capture.
+
+The implementation handles TCP and UDP over IPv4 and IPv6. QUIC is carried as
+UDP; there is no TLS interception. Destinations are proxy, direct, block, or a
+saved profile, evaluated in the normal routing-table order.
 
 **Status:** experimental implementation. Compilation, packet tests and local
 SOCKS5 relay tests are available. Privileged WinDivert interception, desktop
@@ -15,61 +20,106 @@ of working process interception or absence of traffic leaks.
 
 ## Use
 
-1. Use a separate installation with its own configuration and proxy cores.
-   Start that copy as a Windows administrator when testing interception.
-2. Keep this copy's TUN mode disabled. Open **Settings → Application routing**.
-3. Browse to an executable, enter a full path, or select **Executable name (any
-   location)** to match a filename such as `app.exe`. Paths and names may contain
-   spaces; surrounding quotes on pasted paths are accepted. The editor scrolls
-   long paths horizontally and the rule list wraps them, with full-path tooltips.
-   An exact-path rule takes priority over a filename rule. Filename matching is
-   case-insensitive and applies to every executable with that name.
-   A saved path does not have to exist: an app update or uninstall leaves that
-   rule inactive without preventing other rules from starting. Update the path
-   or use filename matching if the app moves between versioned directories.
-4. Alternatively, click **Choose** to the left of **Browse** to open a separate
-   picker window. Names include the PID in parentheses, and a single **TCP/UDP**
-   column displays the two connection counts (for example, `5/2`). The list reads IPv4
-   and IPv6 TCP connections/listeners and UDP endpoints, without enabling routing.
-   System (PID 4) and executables inside the Windows `System32` and `SysWOW64`
-   directories are hidden from this picker. This filter does not change saved
-   rules or manual executable selection. Search by name, PID or path; refresh
-   the snapshot as needed. Double-click an
-   app or choose **Use selected app** to fill the editor. If its path cannot be
-   read, the picker uses its executable name. **Active profile** is the default
-   destination; it uses v2rayN's main local SOCKS proxy. Choose another destination
-   if needed and **Save rule**. New rules are enabled; change that state using the
-   **Enabled** checkbox in the table.
-   Enable **Include child processes** to route helpers and descendants through
-   the same destination, or add separate rules for them.
-5. Turn on **Enable application routing**, then fully exit and restart the
-   selected apps so they open new connections through their selected route.
-   Repeat this after saving rule changes while routing is enabled. Previously
-   established TCP connections cannot be migrated. The switch is
-   disabled during a transition and whenever v2rayN is not running as
-   Administrator. It keeps showing the saved enabled setting even when disabled;
-   errors use normal v2rayN notifications.
-6. Turning the switch off removes interception and stops only Xray processes created by
-   this feature. **Close** closes the editor while routing continues. Exiting
-   v2rayN stops the engine while preserving the enabled setting. Enabled routing
-   starts automatically after v2rayN's normal startup initialization. Windows
-   administrator privileges are still required; no automatic UAC prompt is added.
-   If startup fails, the error is reported and the preference is retained for
-   the next launch. Turning the switch off also disables automatic startup.
-   Configurations created before this setting existed default to off.
+1. Run the test copy as Administrator, with TUN disabled.
+2. Open **Settings → v2rayN settings**. The Application routing switch follows
+   the double-click activation option. Save the settings dialog to apply its
+   enabled state. Cancel leaves that preference unchanged. Without administrator
+   rights, the switch is unclickable and continues to display the saved state.
+3. Use **Monitored interfaces** to select adapters and the default for newly seen
+   adapters. Confirming this separate dialog saves and applies its choices
+   immediately, without committing an unfinished enable-switch change.
+4. Edit rules in **Routing settings**. Add Process or Windows App blocks, or a
+   standalone Port block with optional Network. Process offers Full path, Folder,
+   and Executable picker buttons. Windows App offers a package checklist. Enable
+   and Children flags are editable in those blocks. Rule precedence is table order.
+5. Saving a routing set, changing its selection or changing routing options now
+   requests a core reload immediately, even while the routing list remains open.
+   WinDivert applies the current saved policy at the start of that reload, before
+   the main core is replaced and before the availability-test delay. Rapid reload
+   requests use the application's existing reload coordinator.
+6. Fully exit and restart affected applications to establish new connections.
+   Existing TCP connections cannot be moved to another route. Disabling routing
+   and saving stops interception. Closing settings does not stop it. Normal app
+   exit preserves the enabled preference; startup and subsequent reloads retry
+   enabled routing even if an earlier start failed. Errors use normal notifications.
 
-Only one enabled rule is allowed per executable match. Click the **Enabled** or
-**Children** checkbox directly in the rule table to save that flag immediately,
-without saving other unfinished edits in the form. Saving, deleting, or toggling
-a rule while routing is enabled reapplies the rules immediately; restart selected
-apps afterward to establish new connections. Removing/disabling the last active
-rule switches routing off when running as Administrator. Without administrator
-rights, rule edits are still saved, but do not start routing or change the saved
-global enabled setting. The window combines the administrator requirement and
-app-restart guidance in one paragraph.
-The window has no log/status display; failures use v2rayN's normal notifications.
-Existing v2rayN/proxy-core
-executables cannot be selected, to avoid routing loops.
+The standalone Application routing window and its rule storage are retired.
+Old preview `AppRouting.Rules` fields are ignored when loading; only enablement
+and interface preferences remain. Existing preview rules must be expressed in
+ordinary routing settings. Proxy-core processes and their descendants remain
+excluded to prevent loops.
+
+### Windows App rules
+
+Add a **Windows App** block in the ordinary rule editor and click its `+` button.
+Check any number of installed packages. Search matches package name, family and
+publisher; Select visible and Clear visible affect only the filtered rows.
+Confirming updates the block's draft; saving the routing set applies it.
+Packages may occur in multiple ordinary rules, with normal table precedence.
+Rows show localized display names where available, retain stable family IDs for
+matching, and sort by clicking the name heading. Framework/resource packages and
+bundles are excluded. The list belongs to the Windows account running v2rayN.
+
+**Import loopback exemption rules** checks installed packages matching the current
+Windows loopback exemptions. Import adds to the selection without clearing existing
+checks. It reports unmatched exemptions;
+an exemption for a removed package or a non-package AppContainer cannot be silently
+converted into a package rule. Import does not create, remove or reset any Windows
+loopback permission, and the existing EnableLoopback utility remains available.
+
+Matching uses stable **package family names**, independent of version, architecture
+and installation directory. All applications/processes in each selected package
+share the rule, including package-owned background processes launched through
+brokers. It does not select every instance of a shared Windows host executable.
+The ordinary routing table decides precedence between process, package and inherited matches. **Include
+child processes** also includes unpackaged descendants. Missing packages remain
+selected when editing a saved rule, so an uninstall/reinstall does not erase its
+membership.
+
+Package rules apply to **direct network connections**. Traffic an app already
+sends to the local system proxy continues through that proxy's routing. Importing
+or removing a loopback exemption does not turn that traffic into direct connections.
+WinUI and AppContainer are different properties: packaged desktop applications
+may run with full trust, while sandboxed apps can still need their existing loopback
+permissions. Test direct TCP/UDP and existing proxy use separately; this feature
+does not bypass AppContainer network permissions.
+
+### Monitored interfaces
+
+Click **Monitored interfaces** beside the application-routing switch to choose
+the adapters on which application rules apply. Uncheck a VPN tunnel or a second
+local adapter to leave its application traffic on the normal Windows route.
+This selects traffic to intercept. Selecting an outbound network adapter is no
+longer offered as a rule destination.
+
+The dialog has one row per current non-loopback adapter, including disconnected
+and VPN adapters, with its description and status. Windows filter modules such
+as Npcap and QoS are part of their adapter's stack, not separate IP routing
+choices, and do not get extra rows. Missing adapters keep their saved choice
+and reappear if they return; historical rows are hidden. The compact checkbox
+list uses a single pixel-scrolling viewport and fixed-height rows; full text is
+available in tooltips. **Confirm** saves; **Cancel** leaves
+the choices unchanged. Interface settings can be edited without administrator
+rights or enabling routing. Restart routed apps after changing the selection.
+
+**Monitor new interfaces** defaults to on, preserving the behavior of older
+configurations. Each newly discovered adapter inherits this switch once; changing
+the switch does not change any existing adapter's selection. Discovery runs while
+v2rayN is open, including when application routing is off. Choices are saved by
+the Windows adapter ID, so renaming an adapter or changing its interface index
+does not reset them. An adapter recreated with a different ID is a new interface.
+An adapter created and removed entirely between discovery reads cannot be remembered.
+
+Selection uses the outbound interface reported by WinDivert, before any relay
+connection is created. It is a routing scope, not a firewall or a guarantee of
+compatibility with every VPN. The persistent WinDivert handle still captures
+outbound packets; traffic on excluded adapters is reinjected unchanged without
+process attribution or relaying. TCP reflection replies must still be translated,
+including late replies after an interface is unchecked. Potentially reflected
+TCP fragments still need bounded reassembly; other excluded fragments bypass it.
+Adapter discovery follows address-change notifications, with a five-second
+fallback scan. Until discovery resolves a new index, the new-interface default
+applies. As with process attribution, this is not an atomic security boundary.
 
 ### Child processes
 
@@ -79,59 +129,68 @@ enabled rule takes priority; otherwise the closest ancestor with child routing
 enabled supplies its route. v2rayN/proxy cores and their descendants remain
 excluded, even when an ancestor matches, to prevent routing loops.
 
-Read-only Windows process/socket snapshots refresh on a background worker,
-normally after 100 ms or sooner for unresolved new traffic. Refresh bursts are
-coalesced with at least 25 ms between completed reads. Creation times distinguish
-reused process IDs. Retained process handles supply exit times, so observed
-children can keep their inherited route after the parent exits. The graph keeps
-live ancestry and up to 2048 recent exited process records, plus their ancestry.
-The implementation uses Microsoft's [Toolhelp process entries](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/ns-tlhelp32-processentry32w)
-and [process timing API](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes).
+While routing is running, a process-only Windows ETW observer records starts and
+exits, including intermediate launchers that live entirely between snapshots.
+A passive WinDivert SOCKET observer records socket owners and lifetimes. Together
+these let captured traffic use a short-lived process's identity and inherited
+rule even after that process exits. No additional setting is required.
 
-An inaccessible parent, a launcher that exited before routing observed it, or
-an intermediate helper whose entire lifetime falls between snapshots cannot be
-reliably reconstructed. Such children need an explicit executable rule. Restart
-the target app after enabling routing or editing rules; observed ancestry is retained when
-rules are reapplied. This follows Windows parent-process relationships, not
-application/package membership or processes launched indirectly by system brokers.
+An initial read-only process snapshot seeds already-running applications; further
+process snapshots reconcile once per second. Socket tables and queued events
+refresh on a background worker normally after 100 ms, or sooner for unresolved
+traffic, with at least 25 ms between completed reads. Pending traffic requests an
+ETW buffer flush rather than waiting for the normal trace delivery interval.
+Packet processing uses immutable indexes; it does not query ETW or open processes.
+The observer enables only process start/stop events, requests a 4 MiB trace buffer
+pool, and writes no trace file. It stops when application routing stops.
+
+Creation times distinguish reused PIDs; newer Windows event versions also supply
+process and parent sequence numbers. Closed socket history is retained briefly
+for packets already captured, while replies require current ownership. Queued
+UDP sends can finish after the sender exits; their replies are discarded once
+ownership is lost. Rules and interface selection still govern those sends.
+
+A launcher that exited before observation started, inaccessible identity, or a
+launch delegated to a system broker may still require an explicit child rule.
+Restart the target app after enabling routing or editing rules; observed ancestry
+is retained when rules are reapplied. This follows Windows parent-process
+relationships, not application/package membership. ETW and socket delivery are
+asynchronous: unresolved traffic still has the existing 250 ms bounded wait.
+Observer failure, reported ETW event loss or managed queue overflow stops routing
+with an error instead of silently continuing with incomplete history. Observer
+errors identify the process/socket observer and include the underlying cause;
+the normal application log also records the full exception chain. This is
+not a firewall: after routing stops, normal Windows routing resumes.
 
 ### Destinations
 
-| Selection | Behavior |
+| Outbound tag | Behavior |
 | --- | --- |
-| Active profile (default) | Uses the main SOCKS listener on loopback, including the main client's current profile, routing rules and UDP settings. The current configured local SOCKS port is resolved for each new TCP connection or UDP association. No additional core is started. |
-| Saved profile | Starts an isolated Xray instance for the selected profile, with an authenticated loopback SOCKS5 listener and UDP enabled. Applications selecting the same profile and blocking option share that instance. The selected profile must be supported by Xray; custom full configuration files are excluded. |
-| SOCKS5 | Connects to the supplied host/port using no authentication or username/password. The server must support UDP ASSOCIATE for UDP/QUIC and IPv6 destinations for IPv6 traffic. |
-| Network interface | Creates outbound TCP/UDP sockets bound to an address and index of the selected adapter. A missing/down adapter or unavailable address family fails the route; it does not retry using the default adapter. |
+| proxy | Uses the active profile's generated outbound/chain. |
+| direct | Uses Xray's normal direct outbound. |
+| block | Rejects matching traffic. |
+| Saved profile | Uses that profile's generated outbound/chain. Custom full configurations are excluded. |
 
-The saved-profile route sends its application traffic to that profile instead of
-applying the main client's destination-based routing rules. It preserves the
-profile's generated outbound/chain settings. **Apply blocking rules**, available
-only for saved profiles and off by default, copies the enabled traffic rules
-whose outbound is `block` from the currently selected routing rule-set. These
-rules run before the selected profile's fallback route. Direct, proxy, other
-outbound and DNS-only rules are excluded, so even a direct rule earlier in the
-original rule-set does not exempt traffic from the copied blocking rules.
+Every captured flow goes through the applicable rules from the active main
+routing table, preserving their order. There is no separate Apply blocking rules
+option: put block rules before later routes as in ordinary routing. A supervised
+shared Xray core retains originating process/package identity across the relay.
+HTTP/TLS/QUIC sniffing is routing-only and preserves the original destination IP.
+Encrypted or unavailable names cannot participate in hostname rules.
 
-Normal core reload also checks effective saved-profile, chain, transport, DNS and
-blocking configuration changes. Replacement cores are prepared and authenticated
-before applying changes. Unchanged cores and routes are reused, and failed
-preparation leaves the previous runtime intact. The capture engine stays open
-during a successful rule update; only changed routes are retired.
-As with other routing changes, restart the selected apps to establish fresh flows.
-For domain/protocol matching, the isolated listener enables HTTP/TLS/QUIC sniffing
-for routing only; it keeps the original destination IP. Names hidden by encryption
-or protocols that cannot be sniffed cannot match domain rules. Other rule conditions
-are preserved, including inbound tags (the isolated listener uses `socks`). Rules
-requiring the original process identity are subject to the SOCKS core's limitations:
-it receives the relay's connections, not the app's original sockets.
+Changed effective configurations prepare a new shared core before applying the
+new policy. Unchanged configurations reuse their core; failed preparation retains
+the previous live policy and reports the failure. The capture engine stays open
+through successful updates; changed routes are retired. Ordinary inbound-tag
+conditions use the logical `app-routing` tag for this traffic.
 
-The main client's active profile,
-system proxy settings and core lifecycle are not changed by application routing.
-The isolated Xray configuration allows UDP port 443 through XUDP so QUIC is not
-rejected by the main client's default multiplexing policy.
-SOCKS5 credentials are stored in the application's normal configuration file;
-password masking in the editor does not encrypt that file.
+The shared core's console output appears unchanged in the main log panel; access
+records identify the route with `app-match-... -> outbound` tags. It follows the
+normal core logging settings; enabling core log files sends access/error records
+to those files instead.
+Intercepted traffic can show a destination IP rather than a hostname, including
+Windows Time requests to UDP port 123. Application-routing failures appear in the
+main log panel instead of popup notifications; `guiLogs` retains diagnostics.
 
 ## Scope and limitations
 
@@ -225,11 +284,19 @@ The shared x64 and dedicated x86 release workflows prepare these dependencies
 before publishing either UI variant. Local builds can run the same download script;
 `-CurlPath` accepts an alternative HTTPS-capable curl installation when needed.
 
+The process observer uses the pinned `Microsoft.Diagnostics.Tracing.TraceEvent`
+NuGet package. Normal restore/publish includes it; no separate ETW service,
+scheduled task, or runtime installer is needed.
+Its binary decoder handles process-start schemas v0-v4 and process-stop schemas
+v0-v2, including the variable-length security identifier in recent Windows
+versions. Unknown schema versions stop observation with an explicit diagnostic;
+they are never interpreted using guessed field offsets.
+
 The download script does not load/install a running driver. Keep the upstream
 WinDivert license with distributed binaries and retain the corresponding source
 and licensing references. Source builds also need separately packaged Xray/core
 assets for saved-profile routing, just like ordinary v2rayN release packaging.
-Explicit SOCKS5 and interface routes do not start an Xray process.
+Explicit SOCKS5 and outbound-interface rules from earlier previews are no longer supported and are removed on configuration load.
 
 ## Implementation and validation
 
@@ -243,24 +310,26 @@ instance owns its process, lifetime job and temporary configuration. `AppRouteEn
 selected TCP connections into local listeners, using a complete five-tuple and
 independent translated port for each connection. UDP sessions retain their
 SOCKS5 control channel, relay datagrams and inject replies into the original
-application flow. Interface sockets set `IP_UNICAST_IF`/`IPV6_UNICAST_IF` and bind
-the selected interface's address. IPv6 link-local addresses retain their scope.
+application flow. The shared-table identity bridge is described in
+[routing-block-editor.md](routing-block-editor.md).
 
 Automated tests cover the 80-byte WinDivert address ABI, packet bounds and
 rewriting, IPv4/IPv6 fragments, TCP tuple collisions/reconnections, owner matching,
 mixed packet batches, maximum packet sizes, partial-batch flushing and UDP buffer ownership,
 SOCKS5 authentication and split replies (including domain bind addresses),
 cancellation during each handshake stage, shutdown overlapping a final connection,
-UDP multi-peer framing/association/cleanup, missing-interface failure, staged
-replacement/rollback, core/engine supervision, exclusive ownership and indexed
-attribution. Socket fixtures are loopback-only and never load
+UDP multi-peer framing/association/cleanup, shared-table identity handoff, staged
+replacement/rollback, core/engine supervision, exclusive ownership, delayed
+process events, exited launchers, PID/socket reuse and timestamped attribution.
+Socket fixtures are loopback-only and never load
 WinDivert. Existing core/config tests remain in the full test suite.
 
 Before declaring native support verified, use a Windows VM or dedicated test
 host with two adapters and an IPv6-capable test destination. For each route type,
 check TCP, UDP/QUIC and both IP versions with packet captures at the destination
 and host. Include simultaneous selected/unselected executables, identical source
-ports, helper processes, reconnect/port reuse, adapter loss, proxy failure,
+ports, short-lived launcher/helper chains, one-shot UDP senders, rapid PID/socket
+reuse, ETW startup/stop and event-loss reporting, adapter loss, proxy failure,
 fragmentation, start/stop/exit and both UI variants. Confirm that unselected
 traffic and a separate v2rayN installation remain unaffected. No such privileged
 test has been run on the developer's production machine.
@@ -270,6 +339,7 @@ References:
 - [WireShift architecture reference](https://github.com/Farerudesu/WireShift)
 - [WinDivert documentation and limitations](https://reqrypt.org/windivert-doc.html)
 - [WinDivert source and license](https://github.com/basil00/WinDivert/tree/v2.2.2)
+- [Microsoft TraceEvent library](https://github.com/microsoft/perfview/tree/main/src/TraceEvent)
 - [SOCKS5, RFC 1928](https://www.rfc-editor.org/rfc/rfc1928)
 - [Windows IPv4 socket options](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options)
 - [Windows IPv6 socket options](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-ipv6-socket-options)

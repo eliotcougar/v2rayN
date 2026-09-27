@@ -100,6 +100,14 @@ public partial class OptionSettingWindow
             this.Bind(ViewModel, vm => vm.AutoHideStartup, v => v.togAutoHideStartup.IsChecked).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.EnableDragDropSort, v => v.togEnableDragDropSort.IsChecked).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.DoubleClick2Activate, v => v.togDoubleClick2Activate.IsChecked).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.ApplicationRouting.Enabled, v => v.togAppRouting.IsChecked).DisposeWith(disposables);
+            this.OneWayBind(ViewModel, vm => vm.ApplicationRouting.CanChangeRouting, v => v.togAppRouting.IsEnabled).DisposeWith(disposables);
+            this.BindCommand(ViewModel, vm => vm.ApplicationRouting.PickInterfacesCmd, v => v.btnAppRoutingInterfaces).DisposeWith(disposables);
+            ViewModel.ApplicationRouting.PickInterfaces.RegisterHandler(interaction =>
+            {
+                var picker = new AppRoutingInterfaceWindow { Owner = this, ViewModel = interaction.Input, DataContext = interaction.Input };
+                interaction.SetOutput(picker.ShowDialog() == true);
+            }).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.AutoUpdateInterval, v => v.txtautoUpdateInterval.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.TrayMenuServersLimit, v => v.txttrayMenuServersLimit.Text).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.CurrentFontFamily, v => v.cmbcurrentFontFamily.Text).DisposeWith(disposables);

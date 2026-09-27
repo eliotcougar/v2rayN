@@ -1,4 +1,4 @@
-using ServiceLib.Services.AppRouting;
+﻿using ServiceLib.Services.AppRouting;
 
 namespace ServiceLib.Tests.AppRouting;
 
@@ -16,7 +16,7 @@ public class RuntimeTests
         public IReadOnlyList<AppRouteRule> Rules = [];
         public bool Reject;
         public Action? OnCommit;
-        public Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token)
+        public Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token, RouteSharedPolicy? shared = null)
         {
             token.ThrowIfCancellationRequested();
             if (Reject) { throw new IOException("apply failed"); }
@@ -32,7 +32,7 @@ public class RuntimeTests
     {
         public readonly TaskCompletionSource End = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task Completion => End.Task;
-        public AppRouteRule Endpoint { get; } = new() { SocksPort = port };
+        public RouteSocksEndpoint Endpoint { get; } = new(port);
         public int ProcessId => port;
         public bool Disposed;
         public ValueTask DisposeAsync() { Disposed = true; events.Add("dispose " + name); End.TrySetResult(); return ValueTask.CompletedTask; }
@@ -92,7 +92,7 @@ public class RuntimeTests
             await failed.Should().BeTrue();
             await old.Disposed.Should().BeFalse();
             await candidate.Disposed.Should().BeTrue();
-            await engine.Rules.Single().SocksPort.Should().BeEqualTo(10001);
+            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10001);
         }
         finally { await runtime.StopAsync(); }
     }
@@ -114,11 +114,11 @@ public class RuntimeTests
             await runtime.ApplyAsync(Plan(rule, "one", _ => throw new Exception("must reuse")), default);
             var apply = runtime.ApplyAsync(Plan(rule, "two", _ => ready.Task), default);
             await runtime.IsRunning.Should().BeTrue();
-            await engine.Rules.Single().SocksPort.Should().BeEqualTo(10001);
+            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10001);
             await old.Disposed.Should().BeFalse();
             ready.SetResult(next);
             await apply;
-            await engine.Rules.Single().SocksPort.Should().BeEqualTo(10002);
+            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10002);
             await events.SequenceEqual(new[] { "apply", "start", "apply", "apply", "dispose old" }).Should().BeTrue();
             await rule.Kind.Should().BeEqualTo(AppRouteKind.Profile);
             await lease.Disposed.Should().BeFalse();
@@ -154,7 +154,7 @@ public class RuntimeTests
             await old.Disposed.Should().BeFalse();
             await lease.Disposed.Should().BeFalse();
             await candidate.Disposed.Should().BeEqualTo(applyFailure);
-            await engine.Rules.Single().SocksPort.Should().BeEqualTo(10001);
+            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10001);
         }
         finally { await runtime.StopAsync(); }
     }

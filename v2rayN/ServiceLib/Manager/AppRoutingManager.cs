@@ -25,55 +25,18 @@ public sealed class AppRoutingManager : IAppRoutingRuntime
     public bool IsRunning => _runtime.IsRunning || State == AppRoutingState.Starting;
     public bool IsEnabled => State == AppRoutingState.Running;
     private string? _lastError;
+    private RouteInterfaceMonitor? _interfaces;
+    internal RouteInterfaceMonitor Interfaces => _interfaces ??= new(AppManager.Instance.Config,
+        ConfigHandler.SaveConfig, RouteInterfaceCatalog.Read, ex =>
+        {
+            Logging.SaveLog("Application routing interfaces", ex);
+            Report(ex.Message);
+        });
 
     private AppRoutingManager()
     {
-        _runtime = new(() => OperatingSystem.IsWindows() ? new AppRouteEngine([], [], Report) : throw new PlatformNotSupportedException(),
+        _runtime = new(() => OperatingSystem.IsWindows() ? new AppRouteEngine([], [], Report, () => Interfaces.Policy) : throw new PlatformNotSupportedException(),
             () => OperatingSystem.IsWindows() ? new RouteCaptureLease() : throw new PlatformNotSupportedException());
-    }
-
-    public static void Validate(IEnumerable<AppRouteRule> rules)
-    {
-        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var rule in rules.Where(r => r.Enabled))
-        {
-            var executable = AppRouteMatcher.Normalize(rule.ExecutablePath, rule.MatchByName);
-            if (!paths.Add($"{rule.MatchByName}:{executable}"))
-            {
-                throw new ArgumentException("Each executable match can have only one enabled rule.");
-            }
-
-            if (IsProtectedExecutable(executable))
-            {
-                throw new ArgumentException("v2rayN and proxy-core executables cannot be routed, to prevent routing loops.");
-            }
-
-            if (!Enum.IsDefined(rule.Kind))
-            {
-                throw new ArgumentException("Unknown application route type.");
-            }
-
-            if (rule.Kind == AppRouteKind.Profile && string.IsNullOrWhiteSpace(rule.ProfileId))
-            {
-                throw new ArgumentException("Select a saved profile.");
-            }
-
-            if (rule.Kind == AppRouteKind.Interface && string.IsNullOrWhiteSpace(rule.InterfaceId))
-            {
-                throw new ArgumentException("Select a network interface.");
-            }
-
-            if (rule.Kind == AppRouteKind.Socks5 && (Uri.CheckHostName(rule.SocksHost) == UriHostNameType.Unknown || rule.SocksPort is < 1 or > 65535))
-            {
-                throw new ArgumentException("Enter a valid SOCKS5 host and port (1–65535).");
-            }
-
-            if (rule.Kind == AppRouteKind.Socks5 && ((rule.SocksUsername.Length == 0) != (rule.SocksPassword.Length == 0) ||
-                Encoding.UTF8.GetByteCount(rule.SocksUsername) > 255 || Encoding.UTF8.GetByteCount(rule.SocksPassword) > 255))
-            {
-                throw new ArgumentException("Provide both SOCKS5 credentials, each at most 255 UTF-8 bytes, or leave both empty.");
-            }
-        }
     }
 
     internal static bool IsProtectedExecutable(string executable) =>
@@ -99,13 +62,11 @@ public sealed class AppRoutingManager : IAppRoutingRuntime
         {
             if (_shuttingDown || !config.AppRouting.Enabled) { return; }
             if (config.TunModeItem.EnableTun) { throw new InvalidOperationException(ResUI.AppRoutingTunConflict); }
+            await Interfaces.RefreshAsync();
             var snapshot = JsonUtils.DeepCopy(config);
-            var rules = snapshot.AppRouting.Rules.Where(r => r.Enabled).ToList();
-            Validate(rules);
-            if (rules.Count == 0) { throw new InvalidOperationException("Add at least one enabled application rule."); }
             _preparation = new CancellationTokenSource();
             if (!_runtime.IsRunning) { State = AppRoutingState.Starting; }
-            var plan = await PreparePlan(snapshot, rules, _preparation.Token);
+            var plan = await PreparePlan(snapshot, _preparation.Token);
             _preparation.Token.ThrowIfCancellationRequested();
             if (_shuttingDown || !config.AppRouting.Enabled) { return; }
             await _runtime.ApplyAsync(plan, _preparation.Token);
@@ -128,48 +89,37 @@ public sealed class AppRoutingManager : IAppRoutingRuntime
     }
 
     [SupportedOSPlatform("windows")]
-    private static async Task<RouteRuntimePlan> PreparePlan(Config config, IReadOnlyList<AppRouteRule> rules, CancellationToken token)
+    private static async Task<RouteRuntimePlan> PreparePlan(Config config, CancellationToken token)
     {
-        var profiles = new Dictionary<string, RouteProfilePlan>();
-        var shared = new Dictionary<(string, bool), RouteProfilePlan>();
-        var blocking = rules.Any(r => r.Kind == AppRouteKind.Profile && r.ApplyBlockingRules)
-            ? AppRouteProfileConfig.GetBlockingRouting(config, await ConfigHandler.GetDefaultRouting(config)) : null;
-        foreach (var rule in rules.Where(r => r.Kind == AppRouteKind.Profile))
+        // All match conditions and destinations come from the active routing table.
+        var mainRules = new RouteSharedRules(await ConfigHandler.GetDefaultRouting(config));
+        if (!mainRules.HasCaptureSelectors)
         {
-            token.ThrowIfCancellationRequested();
-            var choice = (rule.ProfileId, rule.ApplyBlockingRules);
-            if (!shared.TryGetValue(choice, out var plan))
-            {
-                var source = await AppManager.Instance.GetProfileItem(rule.ProfileId)
-                    ?? throw new InvalidOperationException("Saved application-routing profile no longer exists.");
-                if (source.ConfigType == EConfigType.Custom) { throw new InvalidOperationException("Custom configuration files cannot be used as application-routing profiles."); }
-                var node = JsonUtils.DeepCopy(source);
-                node.CoreType = ECoreType.Xray;
-                var isolatedConfig = JsonUtils.DeepCopy(config);
-                isolatedConfig.TunModeItem.EnableTun = false;
-                var built = await CoreConfigContextBuilder.Build(isolatedConfig, node);
-                if (!built.Success || built.Context.RunCoreType != ECoreType.Xray)
-                {
-                    throw new InvalidOperationException(string.Join(Environment.NewLine, built.ValidatorResult.Errors));
-                }
-                var endpoint = new AppRouteRule { SocksUsername = "app-route", SocksPassword = "template", ApplyBlockingRules = rule.ApplyBlockingRules };
-                var template = AppRouteProfileConfig.Generate(built.Context with { RoutingItem = blocking }, endpoint);
-                var coreInfo = CoreInfoManager.Instance.GetCoreInfo(ECoreType.Xray);
-                var core = CoreInfoManager.Instance.GetCoreExecFile(coreInfo, out var error);
-                if (string.IsNullOrEmpty(core)) { throw new FileNotFoundException(error); }
-                var environment = coreInfo.Environment?.Where(p => p.Value != null).OrderBy(p => p.Key).ToDictionary(p => p.Key, p => p.Value!);
-                // Fingerprint the effective generated configuration: includes profile, chain/balancer,
-                // routing, DNS, transport and core settings, without random listener credentials/ports.
-                var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(core + "\n" + JsonUtils.Serialize(environment) + "\n" + template)));
-                plan = new(key, cancellation => RouteProfileInstance.StartAsync(template, core, environment, cancellation));
-                shared.Add(choice, plan);
-            }
-            profiles.Add(rule.Id, plan);
+            return new([], new Dictionary<string, RouteProfilePlan>());
         }
-        return new(rules, profiles);
+        token.ThrowIfCancellationRequested();
+        var active = await ConfigHandler.GetDefaultServer(config)
+            ?? throw new InvalidOperationException("Select an active profile for application routing.");
+        if (active.ConfigType == EConfigType.Custom) { throw new InvalidOperationException("Main-table application routing requires a standard active profile."); }
+        var mainNode = JsonUtils.DeepCopy(active);
+        mainNode.CoreType = ECoreType.Xray;
+        var mainConfig = JsonUtils.DeepCopy(config);
+        mainConfig.Mux4RayItem.XudpProxyUDP443 = "allow";
+        var mainContext = await CoreConfigContextBuilder.Build(mainConfig, mainNode);
+        if (!mainContext.Success) { throw new InvalidOperationException(string.Join(Environment.NewLine, mainContext.ValidatorResult.Errors)); }
+        var generated = new CoreConfigV2rayService(mainContext.Context).GenerateClientSocksConfig(10808, true, mainRules.Projection);
+        if (!generated.Success || generated.Data is not string json) { throw new InvalidOperationException(generated.Msg); }
+        var mainCoreInfo = CoreInfoManager.Instance.GetCoreInfo(ECoreType.Xray);
+        var mainCore = CoreInfoManager.Instance.GetCoreExecFile(mainCoreInfo, out var mainError);
+        if (string.IsNullOrEmpty(mainCore)) { throw new FileNotFoundException(mainError); }
+        var mainEnvironment = mainCoreInfo.Environment?.Where(p => p.Value != null).OrderBy(p => p.Key).ToDictionary(p => p.Key, p => p.Value!);
+        var mainKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mainCore + "\n" + JsonUtils.Serialize(mainEnvironment)
+            + "\n" + json + "\n" + JsonUtils.Serialize(mainRules.Branches))));
+        return new([], new Dictionary<string, RouteProfilePlan>(), new(mainKey,
+            (_, cancellation) => RouteSharedProfile.StartAsync(json, mainRules, [], mainCore, mainEnvironment, cancellation)));
     }
 
-    public Task RefreshAsync(Config config) => IsEnabled && config.AppRouting.Enabled ? StartAsync(config) : Task.CompletedTask;
+    public Task RefreshAsync(Config config) => AppRoutingLifecycle.SynchronizeAsync(config, this);
 
     private void WatchRuntime()
     {
@@ -204,7 +154,7 @@ public sealed class AppRoutingManager : IAppRoutingRuntime
         if (_lastError == error) { return; }
         _lastError = error;
         Logging.SaveLog(error);
-        NoticeManager.Instance.Enqueue(error);
+        NoticeManager.Instance.SendMessageEx(error);
     }
 
     public async Task StopAsync()
@@ -227,6 +177,7 @@ public sealed class AppRoutingManager : IAppRoutingRuntime
     public async Task ShutdownAsync()
     {
         _shuttingDown = true;
+        if (_interfaces != null) { await _interfaces.DisposeAsync(); }
         await StopAsync();
     }
 }

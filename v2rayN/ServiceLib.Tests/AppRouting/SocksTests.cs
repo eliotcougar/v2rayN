@@ -23,12 +23,9 @@ public class SocksTests
                 Kind = AppRouteKind.ActiveProfile,
                 ExecutablePath = "App.exe",
                 MatchByName = true,
-                SocksHost = "stale.invalid",
-                SocksPort = 1,
-                SocksUsername = "old-user",
-                SocksPassword = "old-password"
+                ProxyEndpoint = new(1, "old-user", "old-password")
             };
-            AppRoutingManager.Validate([rule]);
+
             var destination = new IPEndPoint(PacketTests.Flow(ipv6).RemoteAddress, 443);
             foreach (var listener in new[] { first, second })
             {
@@ -52,8 +49,7 @@ public class SocksTests
                 await server;
             }
             await rule.Kind.Should().BeEqualTo(AppRouteKind.ActiveProfile);
-            await rule.SocksHost.Should().BeEqualTo("stale.invalid");
-            await rule.SocksPort.Should().BeEqualTo(1);
+            await rule.ProxyEndpoint!.Port.Should().BeEqualTo(1);
         }
         finally { first.Stop(); second.Stop(); }
     }
@@ -137,11 +133,8 @@ public class SocksTests
             });
             var rule = new AppRouteRule
             {
-                Kind = AppRouteKind.Socks5,
-                SocksHost = "127.0.0.1",
-                SocksPort = ((IPEndPoint)listener.LocalEndpoint).Port,
-                SocksUsername = authentication ? "u" : "",
-                SocksPassword = authentication ? "p" : ""
+                Kind = AppRouteKind.Profile,
+                ProxyEndpoint = new(((IPEndPoint)listener.LocalEndpoint).Port, authentication ? "u" : "", authentication ? "p" : "")
             };
             using var socket = await RouteConnector.ConnectTcp(rule, destination, timeout.Token);
             var received = new byte[1];
@@ -174,8 +167,8 @@ public class SocksTests
             {
                 using var socket = await RouteConnector.ConnectTcp(new AppRouteRule
                 {
-                    Kind = AppRouteKind.Socks5,
-                    SocksPort = ((IPEndPoint)listener.LocalEndpoint).Port
+                    Kind = AppRouteKind.Profile,
+                    ProxyEndpoint = new(((IPEndPoint)listener.LocalEndpoint).Port)
                 }, new(IPAddress.Loopback, 9), timeout.Token);
             }
             catch (IOException) { rejected = true; }

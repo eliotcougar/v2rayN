@@ -4,7 +4,8 @@ namespace ServiceLib.Services.AppRouting;
 
 /// <summary>Bypasses known unselected fragments and reassembles selected/unknown traffic.
 /// The engine serializes access with packet processing and policy updates.</summary>
-internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? classify = null)
+internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? classify = null,
+    Func<DivertAddress, byte, IPAddress, IPAddress, bool>? bypassInterface = null)
 {
     internal sealed record Batch(byte[] Packet, DivertAddress Address, List<(byte[] Packet, DivertAddress Address)> Originals, bool PassThrough = false);
     private sealed record Key(IPAddress Source, IPAddress Destination, uint Id, byte Protocol, uint Interface);
@@ -107,6 +108,17 @@ internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? cl
         var key = new Key(new(packet.Slice(six ? 8 : 12, six ? 16 : 4)),
             new(packet.Slice(six ? 24 : 16, six ? 16 : 4)), id, protocol, address.InterfaceIndex);
         Expire(Environment.TickCount64);
+        // Excluded adapters need no ownership lookup or reassembly, even when a
+        // non-initial fragment arrives first. Potential TCP relay replies are the
+        // exception: their translated ports must never escape onto the network.
+        if (bypassInterface?.Invoke(address, protocol, key.Source, key.Destination) == true)
+        {
+            var originals = _pending.TryGetValue(key, out var buffered) ? buffered.Originals.ToList() : [];
+            if (buffered != null) { Remove(key, buffered); }
+            originals.Add((packet.ToArray(), address));
+            batch = new([], address, originals, true);
+            return true;
+        }
         if (offset == 0 && total - start >= 4 && classify != null)
         {
             _bypass.Remove(key);
@@ -232,6 +244,20 @@ internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? cl
     }
 
     public void ClearDecisions() => _bypass.Clear();
+
+    public void RetainInterfaces(Func<uint, bool, bool> retain)
+    {
+        foreach (var key in _bypass.Keys.Where(k => !retain(k.Interface,
+                     k.Source.AddressFamily == AddressFamily.InterNetworkV6)).ToArray())
+        {
+            _bypass.Remove(key);
+        }
+        foreach (var pair in _pending.Where(p => !retain(p.Key.Interface,
+                     p.Key.Source.AddressFamily == AddressFamily.InterNetworkV6)).ToArray())
+        {
+            Remove(pair.Key, pair.Value);
+        }
+    }
 
     private void Reject(Assembly assembly)
     {

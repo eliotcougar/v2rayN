@@ -129,7 +129,7 @@ public class FragmentTests
         await selected.Packet.SequenceEqual(original).Should().BeTrue();
     }
 
-    private static byte[] Fragment(byte[] original, int offset, int count, bool more)
+    internal static byte[] Fragment(byte[] original, int offset, int count, bool more)
     {
         var six = original[0] >> 4 == 6;
         var header = six ? 40 : 20;

@@ -1,4 +1,4 @@
-using ServiceLib.Services.AppRouting;
+﻿using ServiceLib.Services.AppRouting;
 
 namespace ServiceLib.Tests.AppRouting;
 
@@ -107,10 +107,8 @@ public class ShutdownTests
         });
         var rule = new AppRouteRule
         {
-            Kind = AppRouteKind.Socks5,
-            SocksPort = ((IPEndPoint)listener.LocalEndpoint).Port,
-            SocksUsername = "u",
-            SocksPassword = "p"
+            Kind = AppRouteKind.Profile,
+            ProxyEndpoint = new(((IPEndPoint)listener.LocalEndpoint).Port, "u", "p")
         };
         var errors = new ConcurrentQueue<Exception>();
         using var session = udp ? new RouteUdpSession(rule, new(IPAddress.Loopback, 443),

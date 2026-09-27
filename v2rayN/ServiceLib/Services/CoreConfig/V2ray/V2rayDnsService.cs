@@ -216,7 +216,7 @@ public partial class CoreConfigV2rayService
         var routing = context.RoutingItem;
         List<RulesItem>? rules = null;
         rules = JsonUtils.Deserialize<List<RulesItem>>(routing?.RuleSet) ?? [];
-        foreach (var item in rules)
+        foreach (var item in rules.Select(RoutingBlockRules.ForDns))
         {
             if (!item.Enabled || item.Domain is null || item.Domain.Count == 0)
             {

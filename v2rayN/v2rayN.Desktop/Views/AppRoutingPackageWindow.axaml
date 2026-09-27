@@ -1,0 +1,60 @@
+<Window
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vms="clr-namespace:ServiceLib.ViewModels;assembly=ServiceLib"
+    xmlns:resx="clr-namespace:ServiceLib.Resx;assembly=ServiceLib"
+    x:Class="v2rayN.Desktop.Views.AppRoutingPackageWindow"
+    x:DataType="vms:AppRoutingPackageViewModel" x:CompileBindings="False"
+    Title="{x:Static resx:ResUI.AppRoutingWindowsApps}" Width="840" Height="680"
+    MinWidth="620" MinHeight="520" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="{Binding Account}" Margin="4,0,4,8" />
+            <TextBlock Text="{x:Static resx:ResUI.AppRoutingPackageHelp}" TextWrapping="Wrap" Margin="4,0,4,12" />
+            <StackPanel IsVisible="{Binding ShowName}">
+            <TextBlock Text="{x:Static resx:ResUI.AppRoutingRuleName}" Margin="4,0" />
+            <TextBox x:Name="txtName" Text="{Binding Name, Mode=TwoWay}" Margin="4,4,4,8"
+                AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingRuleName}" />
+            </StackPanel>
+            <TextBlock Text="{x:Static resx:ResUI.AppRoutingPackageSearch}" Margin="4,0" />
+            <TextBox Text="{Binding Search, Mode=TwoWay}" Margin="4,4"
+                AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingPackageSearch}" />
+            <WrapPanel Margin="0,4,0,8">
+                <Button Content="{x:Static resx:ResUI.AppRoutingPackageImport}" Command="{Binding ImportCmd}" Margin="4" Padding="12,6" />
+                <Button Content="{x:Static resx:ResUI.AppRoutingSelectVisible}" Command="{Binding SelectVisibleCmd}" Margin="4" Padding="12,6" />
+                <Button Content="{x:Static resx:ResUI.AppRoutingClearVisible}" Command="{Binding ClearVisibleCmd}" Margin="4" Padding="12,6" />
+            </WrapPanel>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Packages}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <CheckBox IsChecked="{Binding Selected, Mode=TwoWay}" IsEnabled="{Binding CanSelect}"
+                            Height="56" Margin="4,0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center"
+                            AutomationProperties.Name="{Binding Name}">
+                            <StackPanel Margin="8,0">
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+                                <TextBlock Text="{Binding Details}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Details}" Opacity="0.7" />
+                            </StackPanel>
+                        </CheckBox>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Margin="4,12,4,0">
+            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,0,0,6" />
+            <DockPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <Button x:Name="btnSave" Content="{x:Static resx:ResUI.TbConfirm}" IsEnabled="{Binding CanConfirm}" IsDefault="True" Margin="4,0" Padding="12,6" />
+                    <Button x:Name="btnCancel" Content="{x:Static resx:ResUI.TbCancel}" IsCancel="True" Margin="4,0,0,0" Padding="12,6" />
+                </StackPanel>
+                <TextBlock Text="{Binding SelectionSummary}" VerticalAlignment="Center" />
+            </DockPanel>
+        </StackPanel>
+    </Grid>
+</Window>

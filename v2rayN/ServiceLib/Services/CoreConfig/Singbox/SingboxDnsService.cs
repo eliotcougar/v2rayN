@@ -330,7 +330,7 @@ public partial class CoreConfigSingboxService
             }
         }
 
-        foreach (var item in rules)
+        foreach (var item in rules.Select(RoutingBlockRules.ForDns))
         {
             if (!item.Enabled || item.Domain is null || item.Domain.Count == 0)
             {
@@ -689,7 +689,7 @@ public partial class CoreConfigSingboxService
         }
         var rules = JsonUtils.Deserialize<List<RulesItem>>(routing.RuleSet) ?? [];
 
-        if (rules?.LastOrDefault() is not { OutboundTag: Global.DirectTag } lastRule)
+        if (rules?.LastOrDefault() is not { OutboundTag: Global.DirectTag, Blocks: null } lastRule)
         {
             return useDirectDns;
         }

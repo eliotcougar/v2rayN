@@ -1,48 +1,13 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 
 namespace ServiceLib.Services.AppRouting;
 
+internal sealed record RouteSocksEndpoint(int Port, string Username = "", string Password = "");
+
 internal static class RouteConnector
 {
-    public static Socket CreateInterfaceSocket(AppRouteRule rule, IPEndPoint destination, ProtocolType protocol)
-    {
-        var adapter = NetworkInterface.GetAllNetworkInterfaces().SingleOrDefault(a => a.Id == rule.InterfaceId && a.OperationalStatus == OperationalStatus.Up)
-            ?? throw new IOException("Selected network interface is unavailable.");
-        var family = destination.AddressFamily;
-        var properties = adapter.GetIPProperties();
-        var local = properties.UnicastAddresses.Select(a => a.Address).FirstOrDefault(a =>
-            a.AddressFamily == family && !IPAddress.IsLoopback(a) &&
-            (family != AddressFamily.InterNetworkV6 || a.IsIPv6LinkLocal == destination.Address.IsIPv6LinkLocal))
-            ?? throw new IOException("Selected network interface has no address for this IP version.");
-        var index = family == AddressFamily.InterNetwork ? properties.GetIPv4Properties().Index : properties.GetIPv6Properties().Index;
-        var socket = new Socket(family, protocol == ProtocolType.Tcp ? SocketType.Stream : SocketType.Dgram, protocol);
-        try
-        {
-            socket.SetSocketOption(family == AddressFamily.InterNetwork ? SocketOptionLevel.IP : SocketOptionLevel.IPv6,
-                (SocketOptionName)31, family == AddressFamily.InterNetwork ? IPAddress.HostToNetworkOrder(index) : index);
-            socket.Bind(new IPEndPoint(local, 0));
-            if (destination.Address.IsIPv6LinkLocal)
-            {
-                destination.Address = new IPAddress(destination.Address.GetAddressBytes(), index);
-            }
-
-            return socket;
-        }
-        catch { socket.Dispose(); throw; }
-    }
-
     public static async Task<Socket> ConnectTcp(AppRouteRule rule, IPEndPoint destination, CancellationToken token)
     {
-        if (rule.Kind == AppRouteKind.Interface)
-        {
-            var socket = CreateInterfaceSocket(rule, destination, ProtocolType.Tcp);
-            try
-            {
-                await socket.ConnectAsync(destination, token);
-                return socket;
-            }
-            catch { socket.Dispose(); throw; }
-        }
         var proxy = await ConnectProxy(rule, token);
         try
         {
@@ -57,16 +22,21 @@ internal static class RouteConnector
 
     internal static async Task<Socket> ConnectProxy(AppRouteRule rule, CancellationToken token, int mainSocksPort)
     {
-        // Resolve for each new TCP connection / UDP association so changes to the
-        // main listener are picked up without rewriting the saved application rule.
-        var activeProfile = rule.Kind == AppRouteKind.ActiveProfile;
+        var endpoint = rule.ResolveEndpoint != null ? await rule.ResolveEndpoint(token)
+            : rule.Kind == AppRouteKind.ActiveProfile ? new RouteSocksEndpoint(mainSocksPort)
+            : rule.ProxyEndpoint ?? throw new InvalidOperationException("The routing profile has not been prepared.");
+        return await ConnectProxy(endpoint, token);
+    }
+
+    internal static async Task<Socket> ConnectProxy(RouteSocksEndpoint endpoint, CancellationToken token)
+    {
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
         try
         {
-            await socket.ConnectAsync(activeProfile ? Global.Loopback : rule.SocksHost, activeProfile ? mainSocksPort : rule.SocksPort, token);
+            await socket.ConnectAsync(Global.Loopback, endpoint.Port, token);
             using var stream = new NetworkStream(socket, false);
             // Credentials on the separate LAN listener do not apply to the main local listener.
-            var authentication = !activeProfile && !string.IsNullOrEmpty(rule.SocksUsername);
+            var authentication = !string.IsNullOrEmpty(endpoint.Username);
             await stream.WriteAsync(new byte[] { 5, 1, authentication ? (byte)2 : (byte)0 }, token);
             var reply = new byte[2];
             await stream.ReadExactlyAsync(reply, token);
@@ -77,8 +47,8 @@ internal static class RouteConnector
 
             if (authentication)
             {
-                var user = Encoding.UTF8.GetBytes(rule.SocksUsername);
-                var password = Encoding.UTF8.GetBytes(rule.SocksPassword);
+                var user = Encoding.UTF8.GetBytes(endpoint.Username);
+                var password = Encoding.UTF8.GetBytes(endpoint.Password);
                 if (user.Length is 0 or > 255 || password.Length is 0 or > 255)
                 {
                     throw new IOException("SOCKS5 credentials must be 1–255 UTF-8 bytes.");

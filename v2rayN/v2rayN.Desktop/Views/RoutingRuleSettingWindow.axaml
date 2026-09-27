@@ -186,6 +186,7 @@
                     <DataGrid.ContextMenu>
                         <ContextMenu>
                             <MenuItem x:Name="menuRuleAdd2" Header="{x:Static resx:ResUI.menuRuleAdd}" />
+                            <MenuItem x:Name="menuRuleEditBlocks" Header="{x:Static resx:ResUI.RoutingBlocksEdit}" />
                             <MenuItem
                                 x:Name="menuRuleRemove"
                                 Header="{x:Static resx:ResUI.menuRuleRemove}"

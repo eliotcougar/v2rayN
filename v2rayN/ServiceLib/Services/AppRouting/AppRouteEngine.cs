@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Buffers.Binary;
 
 namespace ServiceLib.Services.AppRouting;
@@ -19,7 +19,9 @@ internal sealed class AppRouteEngine : IRouteEngine
     private Routing _routing;
     private readonly RouteNatTable _nat = new();
     private readonly RouteFragmentBuffer _fragments;
-    private readonly record struct UdpEndpoint(RouteProcessKey Process, IPAddress Local, ushort Port, string RuleId);
+    private readonly Func<RouteInterfacePolicy> _getInterfaces;
+    private RouteInterfacePolicy _interfaces = RouteInterfacePolicy.All;
+    private readonly record struct UdpEndpoint(RouteProcessKey Process, IPAddress Local, ushort Port, string RuleId, uint Interface, ulong Endpoint);
     private readonly ConcurrentDictionary<UdpEndpoint, RouteUdpSession> _udp = new();
     private readonly ConcurrentDictionary<long, Task> _connections = new();
     private readonly ConcurrentDictionary<long, Task> _sessions = new();
@@ -32,13 +34,42 @@ internal sealed class AppRouteEngine : IRouteEngine
     private IntPtr _handle;
     private long _connectionId;
     private long _lastError;
+    private int _waitingForOwner;
     public Task<Exception?> Completion => _completion.Task;
 
-    public AppRouteEngine(IEnumerable<AppRouteRule> rules, IEnumerable<int> excludedProcesses, Action<string> error)
+    public AppRouteEngine(IEnumerable<AppRouteRule> rules, IEnumerable<int> excludedProcesses, Action<string> error,
+        Func<RouteInterfacePolicy>? interfaces = null)
     {
         _routing = new(new(rules.ToList(), excludedProcesses), new([], [], _ => RouteDecision.Unresolved, 0));
         _error = error;
-        _fragments = new(ClassifyFragment);
+        _getInterfaces = interfaces ?? (() => RouteInterfacePolicy.All);
+        _fragments = new(ClassifyFragment, (address, protocol, local, remote) =>
+            !Monitors(address, local.AddressFamily) && (protocol != 6 || !_nat.MayBeReflection(local, remote)));
+    }
+
+    private bool Monitors(DivertAddress address, AddressFamily family) =>
+        _interfaces.Monitors(address.InterfaceIndex, family == AddressFamily.InterNetworkV6);
+
+    private void RefreshInterfaces()
+    {
+        var next = _getInterfaces();
+        if (ReferenceEquals(next, _interfaces)) { return; }
+        var previous = _interfaces;
+        _interfaces = next;
+        bool Retain(uint index, bool ipv6) => next.Retains(previous, index, ipv6);
+        _fragments.RetainInterfaces(Retain);
+        for (var remaining = _pending.Count; remaining > 0; remaining--)
+        {
+            var packet = _pending.Dequeue();
+            if (Retain(packet.Address.InterfaceIndex, packet.Bytes[0] >> 4 == 6)) { _pending.Add(packet); }
+        }
+        _nat.Retain(_routing.Policy, e => next.Retains(previous, e.OriginalAddress.InterfaceIndex,
+            e.Flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6));
+        foreach (var pair in _udp.Where(p => !next.Retains(previous, p.Key.Interface,
+                     p.Key.Local.AddressFamily == AddressFamily.InterNetworkV6)).ToArray())
+        {
+            if (_udp.TryRemove(pair)) { pair.Value.Dispose(); }
+        }
     }
 
     internal RouteDecisionKind ClassifyFragment(RouteFlow flow)
@@ -50,9 +81,9 @@ internal sealed class AppRouteEngine : IRouteEngine
         return Match(flow).Kind;
     }
 
-    public async Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token)
+    public async Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token, RouteSharedPolicy? shared = null)
     {
-        var policy = new RoutePolicy(rules, excludedProcesses);
+        var policy = new RoutePolicy(rules, excludedProcesses, shared);
         var owners = await Task.Run(() => _attribution.Read(policy));
         lock (_packetGate)
         {
@@ -71,6 +102,10 @@ internal sealed class AppRouteEngine : IRouteEngine
 
     public void Start()
     {
+        // Observe lifecycle events before opening NETWORK, including processes
+        // that run entirely between the seed snapshot and the first captured packet.
+        _attribution.StartEvents(() => { if (Volatile.Read(ref _waitingForOwner) != 0) { RequestRefresh(); } });
+        _routing = new(_routing.Policy, _attribution.Read(_routing.Policy, flushEvents: true));
         foreach (var family in new[] { AddressFamily.InterNetwork, AddressFamily.InterNetworkV6 })
         {
             if (family == AddressFamily.InterNetworkV6 && !Socket.OSSupportsIPv6)
@@ -119,15 +154,17 @@ internal sealed class AppRouteEngine : IRouteEngine
                 var delay = 25 - (Environment.TickCount64 - lastRead);
                 if (delay > 0) { await Task.Delay((int)delay, _stop.Token); }
                 Routing previous;
+                bool flush;
                 lock (_packetGate)
-                { previous = _routing; }
-                var snapshot = _attribution.Read(previous.Policy);
+                { previous = _routing; flush = _pending.Count != 0; }
+                var snapshot = _attribution.Read(previous.Policy, flush);
                 lastRead = Environment.TickCount64;
                 lock (_packetGate)
                 {
                     if (!ReferenceEquals(previous.Policy, _routing.Policy))
                     { continue; }
                     Volatile.Write(ref _routing, new(previous.Policy, snapshot));
+                    RefreshInterfaces();
                     // Retry each packet once per snapshot, even if it must wait again.
                     for (var remaining = _pending.Count; remaining > 0; remaining--)
                     {
@@ -136,6 +173,7 @@ internal sealed class AppRouteEngine : IRouteEngine
                         { Process(packet.Bytes, packet.Address, packet.Fragments, packet); }
                         catch (Exception ex) { Report(ex); }
                     }
+                    Volatile.Write(ref _waitingForOwner, _pending.Count);
                 }
             }
         }
@@ -145,21 +183,22 @@ internal sealed class AppRouteEngine : IRouteEngine
 
     private void RequestRefresh()
     {
-        // Callers hold _packetGate; only this method releases, and the worker only consumes.
-        if (_refreshRequest.CurrentCount == 0)
+        // Event callbacks never take the packet lock. Coalesce their wakeups with
+        // requests from capture; observers stop before this semaphore is disposed.
+        lock (_refreshRequest)
         {
-            _refreshRequest.Release();
+            if (!_stop.IsCancellationRequested && _refreshRequest.CurrentCount == 0) { _refreshRequest.Release(); }
         }
     }
 
-    private RouteDecision Match(RouteFlow flow, long arrived = 0, bool requireFreshSnapshot = false)
+    private RouteDecision Match(RouteFlow flow, long arrived = 0, bool requireFreshSnapshot = false, long timestamp = 0)
     {
         var snapshot = Volatile.Read(ref _routing).Owners;
         if (Environment.TickCount64 - snapshot.ReadAt > 500 || requireFreshSnapshot && snapshot.ReadAt < arrived)
         {
             return RouteDecision.Unresolved;
         }
-        return snapshot.Find(flow);
+        return snapshot.Find(flow, timestamp);
     }
 
     private void Capture()
@@ -186,6 +225,7 @@ internal sealed class AppRouteEngine : IRouteEngine
                 var packetCount = RoutePacketBatch.ReadLengths(bytes.AsSpan(0, checked((int)count)), addressLength, lengths);
                 lock (_packetGate)
                 {
+                    RefreshInterfaces();
                     var offset = 0;
                     for (var i = 0; i < packetCount && !_stop.IsCancellationRequested; i++)
                     {
@@ -254,6 +294,7 @@ internal sealed class AppRouteEngine : IRouteEngine
             {
                 throw new IOException("Could not identify the application owning a packet; packet blocked.");
             }
+            Volatile.Write(ref _waitingForOwner, _pending.Count);
             if (pending == null)
             { RequestRefresh(); }
             return true;
@@ -297,19 +338,21 @@ internal sealed class AppRouteEngine : IRouteEngine
                 Send(bytes, address, checksum: true, output);
                 return;
             }
+            if (!Monitors(address, flow.LocalAddress.AddressFamily)) { PassThrough(); return; }
             var entry = _nat.Find(flow, packet.IsTcpSyn ? packet.TcpSequence : null);
             if (entry == null)
             {
                 // A new connection can reuse a closed tuple. Require a snapshot
                 // begun after its SYN before choosing the route for the stream.
-                var match = Match(flow, arrived, requireFreshSnapshot: packet.IsTcpSyn);
+                var match = Match(flow, arrived, requireFreshSnapshot: packet.IsTcpSyn, timestamp: address.Timestamp);
                 if (DeferIfUnresolved(match))
                 { return; }
-                if (match.Kind == RouteDecisionKind.Unselected)
+                if (match.Kind == RouteDecisionKind.Unselected || match.Rule?.Kind == AppRouteKind.Direct)
                 {
                     PassThrough();
                     return;
                 }
+                if (match.Rule?.Kind == AppRouteKind.Block) { return; }
                 // Existing connections need an application reconnect; do not leak their remaining packets.
                 if (!packet.IsTcpSyn)
                 {
@@ -327,12 +370,14 @@ internal sealed class AppRouteEngine : IRouteEngine
         }
         if (flow.Protocol == 17)
         {
-            var match = Match(flow);
+            if (!Monitors(address, flow.LocalAddress.AddressFamily)) { PassThrough(); return; }
+            var match = Match(flow, timestamp: address.Timestamp);
             if (DeferIfUnresolved(match))
             { return; }
-            if (match.Kind == RouteDecisionKind.Unselected)
+            if (match.Kind == RouteDecisionKind.Unselected || match.Rule?.Kind == AppRouteKind.Direct)
             { PassThrough(); return; }
-            var key = new UdpEndpoint(match.Process!.Value, flow.LocalAddress, flow.LocalPort, match.Rule!.Id);
+            if (match.Rule?.Kind == AppRouteKind.Block) { return; }
+            var key = new UdpEndpoint(match.Process!.Value, flow.LocalAddress, flow.LocalPort, match.Rule!.Id, address.InterfaceIndex, match.Endpoint);
             _udp.TryGetValue(key, out var session);
             if (session != null && !session.IsUsable)
             {
@@ -366,15 +411,21 @@ internal sealed class AppRouteEngine : IRouteEngine
     private RouteUdpSession CreateUdpSession(RouteFlow flow, RouteDecision selected, DivertAddress replyAddress)
     {
         var rule = selected.Rule!;
+        var signature = RoutePolicy.Signature(rule);
+        var originalInterfaces = _interfaces;
         var owner = new RouteFlowOwner(selected.Process!.Value, () =>
         {
+            if (!_getInterfaces().Retains(originalInterfaces, replyAddress.InterfaceIndex,
+                    flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6)) { return null; }
             var current = Match(flow);
-            return current.Kind == RouteDecisionKind.Selected && current.Rule?.Id == rule.Id ? current.Process : null;
+            return current.Kind == RouteDecisionKind.Selected && current.Rule?.Id == rule.Id && current.Endpoint == selected.Endpoint ? current.Process : null;
         });
         replyAddress.Outbound = false;
         return new(rule, new(flow.RemoteAddress, flow.RemotePort),
             (peer, payload) => SendUdpReply(flow with { RemoteAddress = peer.Address, RemotePort = (ushort)peer.Port }, replyAddress, payload),
-            _stop.Token, Report, owner.IsCurrent);
+            _stop.Token, Report, owner.IsCurrent, canSend: () => !_stop.IsCancellationRequested &&
+                Volatile.Read(ref _routing).Policy.Retains(rule.Id, signature) && _getInterfaces().Retains(originalInterfaces,
+                    replyAddress.InterfaceIndex, flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6));
     }
 
     private void SendUdpReply(RouteFlow flow, DivertAddress address, ReadOnlySpan<byte> payload)
@@ -518,6 +569,7 @@ internal sealed class AppRouteEngine : IRouteEngine
 
     private void Fail(Exception ex)
     {
+        Logging.SaveLog("Application routing failure:" + Environment.NewLine + ex);
         Stop(ex);
         _error("Application routing stopped: " + ex.Message);
     }

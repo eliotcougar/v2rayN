@@ -7,8 +7,9 @@ For user instructions, build commands, supported destinations, and the runtime
 validation matrix, see [Application routing for Windows](application-routing.md).
 
 Application routing selects an outbound for an executable without requiring that
-executable to support proxies. WinDivert supplies outbound IP packets; Windows
-socket tables identify their owners. Selected TCP connections are reflected into
+executable to support proxies. WinDivert supplies outbound IP packets and passive
+socket events; ETW process events and Windows snapshots identify their owners.
+Selected TCP connections are reflected into
 local TCP listeners and relayed as streams. Selected UDP datagrams are sent
 through relay sockets shared by each process/local endpoint/rule. Both paths
 preserve the remote address and port that the application expects to see.
@@ -22,11 +23,13 @@ as the implementation changes.
 | Read | Files | Main review question |
 | --- | --- | --- |
 | 1 | [AppRoutingItem.cs](../v2rayN/ServiceLib/Models/Configs/AppRoutingItem.cs), [AppRoutingLifecycle.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRoutingLifecycle.cs) | What is persisted, and what happens on start, stop, and failure? |
-| 2 | [AppRoutingViewModel.cs](../v2rayN/ServiceLib/ViewModels/AppRoutingViewModel.cs) | When do draft edits become saved rules and running routes? |
-| 3 | [AppRoutingManager.cs](../v2rayN/ServiceLib/Manager/AppRoutingManager.cs), [RouteRuntime.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteRuntime.cs), [RouteProfileInstance.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProfileInstance.cs), [AppRouteProfileConfig.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRouteProfileConfig.cs) | Who prepares, commits, supervises and retires runtime resources? |
+| 2 | [AppRoutingSettingsViewModel.cs](../v2rayN/ServiceLib/ViewModels/AppRoutingSettingsViewModel.cs) | When do draft edits become saved rules and running routes? |
+| 2a | [RouteInterfaceCatalog.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteInterfaceCatalog.cs), [RouteInterfaceMonitor.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteInterfaceMonitor.cs), [AppRoutingInterfaceViewModel.cs](../v2rayN/ServiceLib/ViewModels/AppRoutingInterfaceViewModel.cs) | How are adapter choices remembered and applied without replacing the capture engine? |
+| 3 | [AppRoutingManager.cs](../v2rayN/ServiceLib/Manager/AppRoutingManager.cs), [RouteRuntime.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteRuntime.cs), [RouteProfileInstance.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProfileInstance.cs) | Who prepares, commits, supervises and retires runtime resources? |
 | 4 | [RouteAttribution.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteAttribution.cs), [AppRouteMatcher.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRouteMatcher.cs), [RouteOwnerTable.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteOwnerTable.cs), [RouteProcessTree.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessTree.cs) | How does a packet acquire an executable rule? |
+| 4a | [RouteProcessEvents.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessEvents.cs), [RouteSocketEvents.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteSocketEvents.cs) | How are short-lived processes and closed sockets retained without following reused identities? |
 | 5 | [AppRouteEngine.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRouteEngine.cs), [RouteNatTable.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteNatTable.cs) | How do TCP reflection, connection reuse, and shutdown work? |
-| 6 | [RouteUdpSession.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteUdpSession.cs), [RouteConnector.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteConnector.cs) | How are UDP ownership, SOCKS negotiation, and adapter binding handled? |
+| 6 | [RouteUdpSession.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteUdpSession.cs), [RouteConnector.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteConnector.cs) | How are UDP ownership, SOCKS negotiation, and internal profile endpoints handled? |
 | 7 | [RoutePacket.cs](../v2rayN/ServiceLib/Services/AppRouting/RoutePacket.cs), [RoutePacketBatch.cs](../v2rayN/ServiceLib/Services/AppRouting/RoutePacketBatch.cs), [RouteFragmentBuffer.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteFragmentBuffer.cs), [WinDivertApi.cs](../v2rayN/ServiceLib/Services/AppRouting/WinDivertApi.cs) | Which packet and native-layout assumptions require care? |
 | 8 | [AppRouting tests](../v2rayN/ServiceLib.Tests/AppRouting) | Which behaviors have deterministic coverage, and which require a dedicated Windows host? |
 
@@ -38,7 +41,7 @@ bindings and commands; the singleton manager continues running the routes.
 
 ```mermaid
 flowchart TD
-    UI[WPF or Avalonia editor] --> VM[Shared AppRoutingViewModel]
+    UI[WPF or Avalonia editor] --> VM[Shared AppRoutingSettingsViewModel]
     VM --> CFG[Persisted Config.AppRouting]
     VM --> MGR[AppRoutingManager]
     MGR --> RT[RouteRuntime: stage and commit]
@@ -46,13 +49,16 @@ flowchart TD
     RT --> ENGINE[Persistent AppRouteEngine]
     APP[Application packet] --> CAP[WinDivert capture]
     ENGINE --> CAP
-    CAP --> ATTR[Parse and read ownership index]
-    SNAP[Background process/socket snapshots] --> ATTR
+    CAP --> IFACE[Check monitored interface; preserve TCP reflection replies]
+    IFACE -->|Excluded| PASS[Reinject unchanged]
+    IFACE -->|Monitored| ATTR[Parse and read ownership index]
+    EVENTS[ETW process and WinDivert socket events] --> SNAP[Background attribution and snapshots]
+    SNAP --> ATTR
     ATTR -->|Unresolved| WAIT[Bounded wait or drop]
     ATTR -->|Unselected| PASS[Reinject unchanged]
     ATTR -->|Selected TCP| TCP[Reflected listener and stream relay]
     ATTR -->|Selected UDP| UDP[Local-endpoint datagram session]
-    TCP --> OUT[RouteConnector: SOCKS or network interface]
+    TCP --> OUT[RouteConnector: internal SOCKS transport]
     UDP --> OUT
 ```
 
@@ -68,123 +74,159 @@ outbound, but does not select a rule or modify persisted configuration.
 the editor and lifecycle helper. Tests replace this boundary to exercise state
 transitions without starting a driver or a core.
 
+### Windows App package groups
+
+Windows App blocks contain stable package-family identities with enabled and
+Children flags. Normal table order decides between overlapping process/package
+rules. Both UIs share AppRoutingPackageViewModel: its owned dialog edits detached
+checkbox rows, retains missing selected packages, and preserves checks across
+searches. Confirmation updates the rule draft; saving the routing set applies
+membership, flags and destination together. Loading/import run off the UI thread,
+and late completions cannot update a disposed picker.
+`RoutePackageCatalog` reads the current account's installed packages with
+`PackageManager.FindPackagesForUser`, omitting framework/resource packages and
+bundles. The account is shown explicitly, including when elevation uses another
+user's credentials. It uses a small private WinRT ABI adapter because ServiceLib
+also targets non-Windows platforms; importing Windows SDK projections into that
+shared target would change its platform contract. The adapter includes explicit
+interface IDs/slot comments, one-byte WinRT booleans, HRESULT checks, and scoped
+COM/HSTRING lifetimes. No PowerShell subprocess, registry layout assumptions or
+package-directory parsing are involved. Read-only native tests exercise it on
+both Windows process architectures. Localized display metadata may be missing;
+identity remains usable with the package's canonical name as a fallback.
+
+`RouteLoopbackImport` reads `NetworkIsolationGetAppContainerConfig`, derives each
+installed package's AppContainer SID and maps equal SIDs back to family names.
+It reports unmatched entries and merges matching packages into the
+dialog. There is deliberately no Windows permission setter. SID arrays and their
+individual entries use process-heap cleanup as specified by Microsoft; derived
+SIDs use `FreeSid`. The import's selections only take effect after the user confirms
+the package dialog and saves the main rule draft.
+
+`RouteProcessInfo.PackageFamily` comes from `GetPackageFamilyName` on the retained
+process handle, or `PackageFamilyNameFromFullName` on optional ETW start metadata.
+No extra observer or packet-time OS lookup is added. A null identity is unknown;
+empty means unpackaged. Older ETW payloads lacking the field remain unknown until
+a process snapshot can resolve them. Merge keeps known families through sparse
+events/stops without transferring identity across recycled PIDs. Unknown package
+identity delays a decision while it could change rule membership. The main table determines precedence; Children extends each selected row to its observed descendants. Core exclusions and
+generation/QPC safeguards still apply before routing.
+
+Package matching does not recover the original caller once its traffic is inside
+the existing local proxy. Capture still excludes loopback and core-owned sockets;
+supporting per-package destinations for already-proxied traffic would require a
+separate caller-aware proxy frontend. The package dialog and user documentation
+state this boundary. No exemptions are removed to try to force a different path.
+
+API references: [package enumeration](https://learn.microsoft.com/en-us/uwp/api/windows.management.deployment.packagemanager.findpackagesforuser),
+[process package identity](https://learn.microsoft.com/en-us/windows/win32/api/appmodel/nf-appmodel-getpackagefamilyname),
+[ETW package-name conversion](https://learn.microsoft.com/en-us/windows/win32/api/appmodel/nf-appmodel-packagefamilynamefromfullname),
+[read-only loopback configuration and ownership](https://learn.microsoft.com/en-us/windows/win32/api/netfw/nf-netfw-networkisolationgetappcontainerconfig).
+
+### Interface selection and discovery
+
+`AppRoutingItem.InterfaceMonitoring` stores the default for new adapters and
+each known adapter's stable ID, last known name, and monitored flag. The default
+is `true` for backward compatibility. `RouteInterfaceCatalog.Discover` returns
+a copied options snapshot, assigns the default only to previously unseen IDs,
+and retains removed adapters. This avoids changing old choices when the user
+changes the default. `RouteInterfaceNative` reads Windows' `MIB_IF_ROW2` filter
+flag through `GetIfTable2` so NDIS filter modules (Npcap, QoS, etc.) are not
+enumerated as separate choices. This uses OS metadata rather than name matching;
+real VPN/virtual and disconnected adapters remain selectable. Filter modules
+are parts of an adapter's stack, not independent IP interfaces to route through.
+Only non-loopback, non-filter adapters are discovered. The picker hides historical
+entries, including filter IDs saved by older builds, without deleting remembered
+choices for absent adapters. Both UIs use fixed-height checkbox rows in one
+non-virtualized scroll area, avoiding variable-height DataGrid scroll estimates.
+
+The native layout is checked against actual Windows interface GUIDs and indexes
+in both test-host architectures. See Microsoft's
+[MIB_IF_ROW2 documentation](https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ns-netioapi-mib_if_row2)
+for the `FilterInterface` flag and layout.
+
+`RouteInterfaceMonitor`, owned by the manager for the application lifetime,
+serializes discovery and picker commits. It runs even when routing is off, reacts
+to `NetworkAddressChanged`, and scans every five seconds to catch inactive
+adapters. It writes only when persisted values change. The dialog edits separate
+rows; saving overlays only those rows onto the latest discovered set so adapters
+that appeared while the dialog was open keep their own choices. Failure to save
+restores the previous options and does not publish a new policy. `ConfigHandler`
+serializes saves around its common temporary file now that discovery can save
+concurrently with UI actions.
+
+The packet path reads an immutable `RouteInterfacePolicy`: a lookup from each
+IPv4/IPv6 interface index to adapter ID and monitored flag. Indexes are never
+persisted. On a changed snapshot, the engine retires connections, UDP sessions,
+pending attribution packets, and incomplete fragments whose interface was
+excluded or whose index now belongs to another adapter. Unaffected routes stay
+open. UDP ownership validation also checks the latest interface policy before
+both sending and delivering a reply, including while the capture worker is idle.
+
+Ordinary excluded traffic skips process matching and the unresolved-packet
+queue. The WinDivert handle remains broad and persistent; exclusion is applied
+in the packet dispatcher rather than by reopening the driver whenever adapters
+change. This retains batching and avoids interrupting unrelated connections.
+It does not remove WinDivert's capture/reinjection cost on excluded traffic.
+Reverse TCP translation precedes exclusion, because Windows may select an
+excluded adapter for the relay listener's response. Reverse entries remain
+available briefly after retirement to contain late FIN/RST packets.
+
+Excluded UDP fragments and TCP fragments with no possible reverse mapping pass
+through immediately, including out-of-order fragments. TCP fragments between
+addresses that still have a reverse mapping need normal bounded reassembly to
+read the translated port safely. This conservative case can also delay other
+fragmented TCP traffic between those addresses. Unknown indexes use the new
+adapter default until discovery resolves them; a missed index-reuse notification
+can leave the previous snapshot in use until the fallback scan. Neither interface
+selection nor process sampling is a security boundary. Native adapter/VPN tests
+must cover these transitions independently of deterministic tests.
+
 ## 2. Persisted model and executable matching
 
-`Config.AppRouting` contains the global `Enabled` preference and a list of
-`AppRouteRule` objects. A rule has a stable ID, its own enabled flag, an executable
-match, optional child matching, and destination-specific fields. SOCKS passwords
-are ordinary configuration values; masking the editor field does not encrypt
-the configuration file.
+`Config.AppRouting` contains only the global Enabled preference and monitored
+interface choices. Old standalone Rules fields are unknown JSON and ignored,
+including disabled or invalid preview entries. The main routing table stores all
+application selectors and destinations; see [the block-editor guide](routing-block-editor.md).
+Process rows infer full path, folder or executable-name matching from their value.
+Windows App rows persist family identity, not localized names. Those names are
+loaded asynchronously for display and sorting only.
 
-The persisted enum values deliberately differ from the visual option order:
-
-| Value | Meaning |
-| --- | --- |
-| `0` | Saved profile |
-| `1` | Explicit SOCKS5 endpoint |
-| `2` | Network interface |
-| `3` | Active profile |
-
-The editor explicitly chooses `ActiveProfile` for a new rule. Moving this option
-to the top of the UI must not renumber older saved destinations. Missing global
-enabled/child/blocking settings deserialize to `false`; new rules are enabled.
-
-`AppRouteMatcher.Normalize` trims outer whitespace and one surrounding pair of
-quotes. It never splits on spaces. Full-path mode requires a fully qualified
-`.exe` path and normalizes it with `Path.GetFullPath`. Name mode extracts the
-filename even when the input came from a full path. It also requires `.exe`.
-Neither mode requires the file to exist, so uninstalling an application or moving
-its versioned directory does not invalidate unrelated routing rules.
-
-The matcher maintains separate case-insensitive path and filename dictionaries.
-An exact-path rule wins over a name rule regardless of list order. Validation
-allows both to coexist but permits only one enabled rule for the same normalized
-match and mode. Disabled duplicates are therefore valid until someone tries to
-enable a conflicting rule. Validation also rejects known v2rayN/core executable
-names and invalid destination/credential fields.
-
-This is executable matching, not package identity, publisher verification, or
-filesystem identity: a name rule applies to every executable with that name,
-and full-path matching does not resolve file IDs or aliases.
+The packet/transport layer still uses internal `AppRouteRule` targets and the
+existing matcher types. Production plans contain no standalone rules or fallback
+profile plans; the shared policy creates targets from the ordinary routing table.
+Protected process ancestry remains excluded before any shared selection.
 
 ## 3. Editor, persistence, and runtime state
 
-Three states must remain distinct:
+`AppRoutingSettingsViewModel` supplies the controls embedded in OptionSettingWindow.
+The enabled switch is a draft until the normal settings confirmation saves it.
+A canceled dialog or failed save does not change the saved preference; without
+administrator rights the switch retains its state but is disabled. The owned
+interface dialog commits choices on its own confirmation, using the monitor's
+serialized discovery/commit path without saving an unfinished switch draft.
 
-| State | Owner | Meaning |
-| --- | --- | --- |
-| Form fields | `AppRoutingViewModel` | An unfinished draft; selecting a row copies values into the form. |
-| Saved rules and enabled preference | `Config.AppRouting` | The user's configuration, including what should start on the next launch. |
-| Actual engine state | `AppRoutingManager.IsEnabled` | The manager has committed a running runtime; asynchronous failure supervision updates it. |
+`RoutingSettingViewModel.ApplyChanges` awaits the reload callback supplied by MainWindowViewModel after saved routing edits, selection changes and routing-option saves. Closing the dialog cannot unsubscribe or discard the final request. Changes therefore reach the existing reload coordinator immediately,
+without requiring the user to close the routing list. Normal settings confirmation
+also reloads the core. The reload path calls AppRoutingLifecycle.SynchronizeAsync
+before replacing the main core or waiting for availability checks.
 
-The switch displays the saved preference. `SyncSwitch` suppresses the reactive
-callback while restoring that value, so reading state does not trigger another
-start/stop command. `CanChangeRouting` combines administrator rights with the
-busy state. A non-administrator can edit rules but cannot operate the switch;
-its saved on/off value remains visible.
+Every enabled reload calls StartAsync to apply the latest saved policy, even if
+routing is currently stopped or faulted. Disabled reloads call StopAsync. The
+runtime never clears the saved preference after failure or normal shutdown.
+Staging failure keeps the previous working policy and reports the error; a later
+reload retries. Interface observation starts before the initial reload. TUN and
+application routing remain mutually exclusive.
 
-`SaveAndApply` validates a prospective list, replaces the configuration with a
-deep copy, and saves it before committing visible rows. A save failure restores
-the previous configuration and leaves the draft intact. A runtime failure after
-a successful save retains the saved edits and reports the failure. These are
-different outcomes: failing to apply a valid saved change must not silently
-discard the user's work.
-
-Table checkboxes call `ToggleRuleFlag`, which copies the stored row and changes
-only the requested flag. They do not save unrelated edits still in the form.
-The corresponding selected-form flag is synchronized after a successful save.
-Deleting or disabling the last enabled rule also clears the global enabled
-preference when running as administrator. Non-administrator edits preserve that
-preference and do not invoke the runtime.
-
-`AppRoutingLifecycle` handles explicit global toggles and startup separately:
-
-| Event | Persistence and runtime behavior |
-| --- | --- |
-| Manual enable/disable | Save the new preference, then start/stop. Restore and save the previous preference if the runtime operation fails. A preference rollback does not itself recreate a previous engine. |
-| Application startup | `RestoreAsync` starts routing if the preference is enabled and the runtime is inactive. A startup failure leaves the enabled preference intact. |
-| Save/delete/toggle a rule while globally enabled | Save first, then reapply, or stop if no active rules remain; administrator rights are required for the runtime step. |
-| Close the editor | Dispose editor subscriptions/commands; leave the manager running. |
-| Exit v2rayN | Shut down feature resources without clearing the startup preference. |
-
-The existing application's integration points are small:
-
-- [MainWindowViewModel.cs](../v2rayN/ServiceLib/ViewModels/MainWindowViewModel.cs)
-  opens the editor, restores routing after normal startup reload, and checks
-  whether effective saved-profile configurations changed during a main-core reload.
-- [AppManager.cs](../v2rayN/ServiceLib/Manager/AppManager.cs) calls
-  `ShutdownAsync` before the normal main core stops.
-- [StatusBarViewModel.cs](../v2rayN/ServiceLib/ViewModels/StatusBarViewModel.cs)
-  refuses to enable TUN while application routing is starting or owns an engine.
-  The manager also refuses to start application routing while TUN is enabled.
-
-### UI-specific responsibilities and the app picker
-
-The [WPF window](../v2rayN/v2rayN/Views/AppRoutingWindow.xaml) and
-[Avalonia window](../v2rayN/v2rayN.Desktop/Views/AppRoutingWindow.axaml) bind to the
-same view model. Their code-behind supplies platform file dialogs and owned modal
-picker windows. WPF additionally bridges its password control to the view model.
-There is no separate routing implementation in either UI.
-
-`PickProcess` returns a selected `AppRouteProcess`, or `null` on cancellation.
-The editor changes only after acceptance. The separate picker shares the view
-model's search/snapshot state and refreshes on opening.
-[AppRouteProcessCatalog.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRouteProcessCatalog.cs)
-reads IPv4/IPv6 TCP and UDP owner tables, groups rows by PID, and resolves the
-executable image path. Its counts are TCP table entries and UDP endpoints,
-including listeners; they are not traffic-rate measurements. It formats these
-as `TCP/UDP` and appends the PID to the name in parentheses.
-
-The picker excludes PID 4 and lower, protected core names, and known paths under
-the actual Windows `System32`/`SysWOW64` directories. The directory comparison
-includes a separator so similarly prefixed directories are not hidden. If a path
-is inaccessible, it can fall back to an executable name. This display filter is
-separate from manual rule validation and runtime matching.
+WPF and Avalonia use the same settings and rule-block view models. Their code-behind
+supplies owned platform picker windows. The standalone window, menu command, view
+registration and rule editor are removed. No UI window owns capture lifetime.
+Process/package picker behavior and matching are covered in the block-editor guide.
 
 ## 4. Runtime ownership and destination preparation
 
 `AppRoutingManager.StartAsync` validates the saved preference, Windows architecture,
-administrator token, TUN conflict, native files and enabled rules. A semaphore
+administrator token, TUN conflict, native files and the active routing table. A semaphore
 serializes lifecycle operations. It snapshots configuration inside that boundary;
 runtime transformation never changes the saved profile selection or credentials.
 
@@ -221,21 +263,20 @@ Shutdown sets its flag before stopping, so delayed startup cannot outlive exit.
 An unsuccessful apply retains saved edits as well as the previous live policy;
 the normal error notification tells the user that the new settings did not apply.
 
-| Destination | Runtime endpoint | Relation to main routing rules |
-| --- | --- | --- |
-| Active profile | Current main loopback SOCKS port, resolved for each new connection/association. | Uses the main core's routing and UDP policy. |
-| Saved profile | Prepared authenticated Xray SOCKS listener; only the runtime rule becomes SOCKS. | Uses the selected generated outbound/chain, optionally preceded by copied block rules. |
-| Explicit SOCKS5 | Supplied endpoint and optional credentials. | The selected SOCKS server decides subsequent routing. |
-| Network interface | Socket pinned to the selected adapter. | Does not enter the main proxy's routing engine. |
+All destinations now come from the active main routing table. A supervised shared
+Xray core evaluates proxy, direct, block and saved-profile outbounds in that order
+of rules. Scoped authenticated inbounds preserve process/package identity; see
+[identity handoff](routing-block-editor.md#identity-handoff-to-xray). Standalone
+fallback profiles and their optional copied-block-rule preparation are removed.
 
-### Isolated saved-profile cores
+### Shared main-table core
 
-`PreparePlan` copies the saved profile and configuration, requests Xray through
-the existing `CoreConfigContextBuilder`, and disables TUN in the copy. Custom full
+`PreparePlan` copies the active profile and configuration, requests Xray through
+the existing `CoreConfigContextBuilder`, with TUN excluded from the isolated configuration. Custom full
 configurations remain unsupported. The generated template uses fixed placeholder
 listener credentials/port. A SHA-256 fingerprint covers this effective template,
 the resolved core path, and sorted core environment settings. Profile, transport,
-chain/balancer, DNS and applicable blocking changes therefore invalidate the plan
+chain/balancer, DNS and routing changes therefore invalidate the plan
 without maintaining a separate list of every dependency property. Identical
 effective plans share a core, including across reloads.
 
@@ -252,39 +293,22 @@ The process exit task is exposed for supervision. Cleanup stops the owned proces
 closes its job, observes exit, disposes process resources and deletes its config.
 Runtime credentials never replace the user's saved profile choice.
 
-### Optional blocking rules
+Normal core reload regenerates the effective main-table plan. Its fingerprint
+includes native rules, capture eligibility, executable/package selectors, profile
+outbounds, core path and environment. Changed plans replace the shared core;
+unchanged plans reuse it. A replacement retires the previous shared targets and
+connections after committing the new policy. The internal SOCKS TCP/UDP transport
+remains unchanged. The generated final active-profile/balancer rule is preserved.
 
-`AppRouteProfileConfig.GetBlockingRouting` creates a snapshot containing only
-enabled, non-DNS rules whose outbound tag is `block`, plus the effective domain
-strategy. It preserves their relative order and other conditions. Direct/proxy
-rules do not enter this snapshot, even if they preceded a block rule originally.
-
-`Generate` uses the existing Xray configuration generator, adds an authenticated
-loopback SOCKS inbound with UDP enabled, and allows UDP port 443 through the
-generated XUDP policy. When blocking is enabled, the inbound is tagged `socks`
-and enables HTTP/TLS/QUIC sniffing with `routeOnly = true`. Sniffed names can
-participate in routing while the original destination IP remains the target.
-Hidden names and conditions requiring the original process remain limited by
-what Xray can observe through the SOCKS relay.
-
-The shared generator change is in
-[CoreConfigV2rayService.cs](../v2rayN/ServiceLib/Services/CoreConfig/V2ray/CoreConfigV2rayService.cs):
-`GenerateClientSpeedtestConfig` delegates to `GenerateClientSocksConfig` with
-routing disabled, preserving that existing path. Application routing can enable
-context rules before the generated final outbound/balancer rule. Outbound and
-chain generation stay in the existing implementation.
-
-The accompanying
-[V2rayRoutingService.cs](../v2rayN/ServiceLib/Services/CoreConfig/V2ray/V2rayRoutingService.cs)
-change filters commented domains before adding the generated domain rule. It
-avoids indexing a list after removing its last element and avoids emitting an
-empty domain branch that would lose the original restriction.
-
-Normal core reload regenerates effective profile plans, including for saved
-profiles without blocking enabled. Only changed plans replace their cores.
-Unrelated rules absent from the generated configuration do not invalidate a core.
-Active-profile and explicit SOCKS/NIC routes do not acquire isolated Xray cores.
-Changed routes need new application connections; unchanged routes are retained.
+Standalone Port rules (optionally with Network) also opt matching destination
+ports into capture across eligible processes. `RoutePortCapture` builds a TCP
+and UDP port bitmap, with constant-time packet lookup. Full-range rules, including
+`1-65535` and equivalent unions, remain native fallbacks without broadening
+capture. The per-branch capture flag participates in the core reuse fingerprint.
+Port eligibility is applied before socket-owner merging; otherwise two owners of
+the same UDP bind could incorrectly make an unrelated destination ambiguous.
+See [the block-editor review guide](routing-block-editor.md) for the complete
+capture and native rule-order semantics.
 
 ## 5. Attribution and child-process inheritance
 
@@ -296,15 +320,17 @@ matcher are removed. Buffer sizing retries are bounded to four attempts if
 concurrent socket creation changes the table between calls.
 
 [RouteAttribution.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteAttribution.cs)
-separates native sampling from packet handling. `RouteAttributionSource` reads
-process identities and both IP families' owner tables on a background worker.
+separates native observation from packet handling. `RouteAttributionSource` merges
+process/socket events and both IP families' owner tables on a background worker.
 It computes each process's rule once per snapshot and builds immutable indexes:
 TCP by full tuple, UDP by local endpoint with exact/wildcard ownership merged.
 Packet lookups do no native calls, process-handle opens, or owner-table scans.
 Known unselected flows are indexed too; their traffic does not repeatedly resolve
 the same executable. Snapshots normally refresh after 100 ms and wake sooner for
 new unresolved flows, with at least 25 ms between completed refreshes to coalesce
-bursts. The index is atomically replaced only if its policy is still current.
+bursts. Process snapshots reconcile once per second. Event callbacks wake the
+worker only when packets are waiting, without acquiring the packet lock. The
+index is atomically replaced only if its policy is still current.
 
 The four outcomes are deliberately distinct:
 
@@ -329,31 +355,108 @@ before a retry drops the packet and emits a throttled notice. Under load or with
 inaccessible ownership this can also drop traffic that would otherwise prove
 unselected. No direct fallback is used to hide that failure.
 
-### Process identities and ancestry
+### Process events, identities and ancestry
+
+`RouteProcessEvents` owns one real-time session through Microsoft's pinned
+`TraceEvent` library. It enables `Microsoft-Windows-Kernel-Process`, process keyword
+`0x10`, and event IDs 1/2 only. It does not enable thread, image, file or network
+tracing or write an ETL file. The requested pool is 4 MiB with 64 KiB buffers and
+no per-processor minimum allocation. A dedicated worker owns the session and a
+named mutex for its entire lifetime. The installation-derived name lets a restart
+reclaim its own orphaned session after a crash, while refusing to stop another
+active owner. The existing machine-wide capture lease still governs interception.
+
+[RouteProcessEventDecoder](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessEventDecoder.cs)
+reads the versioned binary payloads for start v0-v4 and stop v0-v2. These fields
+have fixed widths on both x86 and x64. TraceEvent's dynamic parser omits the
+fields after `win:SID` in start v3/v4, including the executable path and package
+identity, so the observer subscribes to raw events instead. The reader skips
+the SID using its subauthority count, bounds every read, and rejects unknown
+schema versions explicitly. It does not reopen an exited process to fill gaps.
+
+Decode uses the payload PID, creation/exit FILETIMEs, parent PID and image path;
+the event header PID is not the child identity. Optional process/parent sequence
+numbers strengthen generation matching on Windows versions that provide them.
+Native device paths are normalized without reopening a process that may already
+have exited. Raw QPC timestamps share WinDivert's clock and are kept separately
+from creation FILETIMEs. Start/stop delivery can be delayed or reordered: a stop
+stub is filled by a later start without undoing its exit.
+
+Callback failures are recorded before leaving the native callback boundary or
+closing the ETW session. Queue health checks preserve the first recorded cause,
+including when a concurrent lost-event query encounters an already closed
+session. That secondary `ERROR_WMI_INSTANCE_NOT_FOUND` must not hide a decoding
+failure. Health checks run outside the ingress lock so flushing can deliver
+events without blocking their callbacks.
+
+Normal ETW delivery may be too late for the packet deferral budget. When packets
+are pending, the existing coalesced attribution refresh requests `Flush` before
+draining the queue. Flush requests delivery; it does not make callbacks synchronous.
+Subsequent event notifications wake pending attribution again. No packet waits on
+the ETW worker, and the 250 ms deadline is retained.
 
 [RouteProcessSnapshot](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessSnapshot.cs)
 retains read-only process handles, creation times and observed exit times. It
 rechecks exits after enumeration and rejects a process started after the sample
-time as a potentially reused PID. `RouteProcessTree` retains this history across
+time as a potentially reused PID. It seeds processes already running before the
+observer started and reconciles readable identities and exits once per second.
+`RouteProcessTree` retains this history across
 policy changes; only its matcher and exclusions change. A rule update therefore
 does not discard ancestry already learned for children of an exited parent.
 
 The graph links a child to the newest observed parent generation whose lifetime
-contains the child's creation time. Own rules take precedence; otherwise the
+contains the child's creation time and whose sequence number, when available,
+matches the child's recorded parent sequence. Own rules take precedence; otherwise the
 nearest ancestor with child matching supplies the rule. Traversal continues to
 check excluded/protected ancestors, even after finding a match. A visited-key set
-rejects cyclic ancestry. Without any child rules, direct matching skips traversal.
-Live ancestry and up to 2048 recent exited records plus their ancestry are retained.
+rejects cyclic ancestry. A process born after observer startup stays unresolved
+until its start event and required ancestry arrive. Live ancestry, all exits in
+the last ten seconds, and the newest 2048 exited records plus ancestry are retained.
+The graph has a hard 65536-record cap; it fails rather than silently losing a
+launcher still needed to identify traffic.
 
 The engine PID and its core PIDs are excluded. Known core executable names are
-also protected. Unobserved or inaccessible ancestry still cannot be reconstructed
-reliably: short-lived launchers and broker-mediated launches may need explicit
-child rules. This is Windows parentage, not package membership.
+also protected. ETW preserves short-lived launchers observed while routing is on.
+Ancestry that disappeared before observation, inaccessible identities and
+broker-mediated launches may still need explicit child rules. This is Windows
+parentage, not package membership.
 
-Process and socket tables are separate samples, not atomic kernel socket identity.
-Closure/rebind between samples, including within one process, still requires
-native stress testing. This implementation improves bounded attribution and cost
-without adding a second interception layer; it does not claim firewall isolation.
+### Passive socket history
+
+`RouteSocketEvents` opens the SOCKET layer with `SNIFF | RECV_ONLY` and subscribes
+to TCP/UDP bind, connect and close. It never blocks or reinjects a socket operation.
+Its dedicated worker copies endpoint ID, PID, addresses, ports and QPC timestamp
+into a bounded ingress queue. `ParentEndpointId` is not process ancestry.
+
+`RouteSocketHistory` keeps close tombstones for reordered delivery and ten seconds
+of closed history. Process exits also bound socket lifetimes. Its 65536-record cap
+prevents unbounded growth. `RouteProcessDecisions` associates each socket event
+with the process generation alive at that timestamp. The immutable socket index
+groups by protocol/local port and then checks address, remote tuple and lifetime.
+IPv6 scope comparison uses address bytes because SOCKET metadata has no scope.
+
+NETWORK still has no PID or endpoint ID. The packet's original QPC timestamp
+selects historical ownership; a later owner-table row must not reassign an older
+packet to a reused port. A known lifecycle gap stays unresolved. Live ownership
+is cross-checked with owner tables to retain shared-bind ambiguity detection;
+the tables also cover sockets predating the observer. UDP replies request current
+ownership and never use closed history.
+
+Both observers start before NETWORK capture. Managed ingress is bounded to 32768
+records per observer. Queue overflow, observer failure or reported ETW event loss
+faults attribution and stops the runtime through existing supervision. Queue
+failures identify the process/socket observer and retain
+the original exception; the engine records the exception chain in the normal log.
+`RouteProfileInstance` forwards its supervised Xray process's console output to
+`NoticeManager.SendMessage` unchanged, so the main
+message panel receives access records as well as core diagnostics. Output also
+remains in `guiLogs`. This happens on the process-output callback, outside packet
+handling. Xray's configured log level and file destinations still apply.
+Application-routing startup/runtime/interface errors use the same message panel
+without snack notifications; exception details remain in the diagnostic log.
+Not every native SOCKET event loss is detectable. Asynchronous delivery, shared
+binds, dual-stack sockets and rapid reuse require native stress tests; the feature
+does not provide atomic kernel enforcement or firewall isolation.
 
 ## 6. TCP: packet reflection followed by stream relay
 
@@ -410,7 +513,7 @@ Restored response, injected in:  R:b  -> L:a
 The reflected connection lets the normal Windows TCP stack supply a stream to
 the relay. The engine does not implement TCP sequence acknowledgment, congestion
 control, or stream reassembly itself. The relay establishes a separate outbound
-socket to the original destination through SOCKS or the selected adapter. TLS
+socket to the original destination through internal SOCKS. TLS
 bytes are copied without TLS termination.
 
 `Process` checks for listener response packets first. Their translated endpoint
@@ -463,15 +566,18 @@ send to multiple destinations through one outbound socket/SOCKS association.
 This preserves a stable outbound source port for that session and accepts replies
 from a different peer, as an unconnected application socket may require.
 
-This is an observed local endpoint, not a Windows socket ID. A wildcard socket
-using several source addresses or both IP families can still have several sessions.
-Same-process close/rebind between ownership samples cannot always be detected.
-These limits must not be presented as exact socket lifetime tracking.
+The key also includes the observed WinDivert endpoint ID (zero for table-only
+attribution). This separates observed socket reuse within one process. A wildcard
+socket using several source addresses or both IP families can still have several
+sessions; NETWORK has no socket ID, so correlation remains asynchronous.
 
-`RouteFlowOwner` checks the current immutable ownership index before queueing,
-sending and delivering replies. There is no second timed cache. Once ownership
-is lost the session stays invalid, protecting delayed handshakes, queued packets
-and late replies from an observed owner change or PID reuse.
+`RouteFlowOwner` checks the current immutable ownership index for replies,
+including process creation time and endpoint ID. Once ownership is lost, reply
+delivery stays invalid. Outbound datagrams already attributed at capture may
+finish even after the sender exits during proxy setup. Their separate `canSend`
+predicate checks runtime, unchanged rule signature and monitored interface; the
+signature is prepared once per association, never serialized per datagram. A
+discarded late reply does not cancel remaining approved outbound datagrams.
 
 For SOCKS routes, `Run` opens a control connection, binds a UDP socket on that
 connection's local address, requests UDP ASSOCIATE and connects the socket to the
@@ -481,15 +587,13 @@ remains open throughout the association. Each queued datagram carries its own
 destination; valid reply framing supplies the actual peer address/port. Literal
 source addresses must match the session's destination family.
 
-NIC routes use an unconnected socket bound to the selected adapter, with
-`SendToAsync`/`ReceiveFromAsync` for multiple peers. Link-local destinations use
-that adapter's scope. `WriteUdpReply` constructs an inbound packet from the actual
+`WriteUdpReply` constructs an inbound packet from the actual
 replying peer to the application's original local endpoint. WinDivert calculates
 checksums and reinjects it with the captured interface metadata; Windows applies
 the application's own connected/unconnected receive semantics.
 
 Engine packet processing serializes producers. `Send` copies each accepted payload
-once into a rented buffer, including its SOCKS header when applicable, and queues
+once into a rented buffer, including its SOCKS header, and queues
 the owned frame. Only the actual frame length is sent, never the pool buffer's
 spare capacity. The channel remains limited to 64 datagrams and 64 KiB of payload;
 `TryWrite` never waits and byte-budget rejection happens before renting. Dequeue,
@@ -517,16 +621,14 @@ a replacement installed concurrently. A separate task registry retains all live
 session tasks, including removed/replaced sessions, until completion. Shutdown
 must drain these retiring sessions too, not only the current endpoint dictionary.
 
-## 8. SOCKS and network-interface details
+## 8. Internal SOCKS transport
 
 `RouteConnector` uses `ReadExactlyAsync` for protocol fields, so split TCP reads
 are handled correctly. It validates method selection, optional username/password
 authentication, command status, address type, and reply lengths. Credentials
 are limited by UTF-8 byte length rather than character count.
 
-Active-profile connections use the main local listener and ignore any old
-explicit SOCKS credentials on the rule. Other SOCKS connections use the supplied
-endpoint. CONNECT sends an IP destination and consumes the complete bind reply;
+Captured flows use prepared authenticated loopback endpoints. CONNECT sends an IP destination and consumes the complete bind reply;
 it does not resolve a returned domain unnecessarily. UDP ASSOCIATE needs the bind
 endpoint, so a domain is resolved when the UDP socket connects. Unspecified bind
 addresses use the proxy peer address; IPv4-mapped addresses are normalized.
@@ -535,16 +637,6 @@ SOCKS UDP fragmentation (`FRAG != 0`) is unsupported. UDP reply framing accepts
 literal IPv4/IPv6 source addresses, not domain-form source addresses. This is
 separate from supporting a domain-form UDP relay address in the control reply.
 There is no silent direct fallback after a SOCKS failure.
-
-For an interface route, `CreateInterfaceSocket` resolves the stored adapter ID
-again when creating a socket. The adapter must be up and have a suitable unicast
-address for the destination family. It sets socket option 31 at the appropriate
-IP level (`IP_UNICAST_IF`/`IPV6_UNICAST_IF`) and binds the chosen source address.
-The IPv4 index is passed in network byte order; the IPv6 index is not converted.
-Link-local IPv6 destinations use the selected adapter's scope. If setup fails,
-the socket is disposed and the error propagates; the default adapter is not
-substituted. There is no address-selection UI or automatic migration of existing
-sockets when an adapter changes.
 
 ## 9. Packet parsing and IP fragments
 
@@ -582,7 +674,8 @@ even if no further input arrives.
 | --- | --- |
 | Runtime plans, core instances, generation, lease | Manager semaphore around `RouteRuntime` operations. |
 | Policy commit, capture packet processing, pending retries, fragment state | `_packetGate`; native sampling and awaited setup occur outside it. |
-| Process handles and ancestry | `RouteAttributionSource` lock, used only by preparation/refresh. |
+| Process handles, ancestry and socket history | `RouteAttributionSource` lock, used only by preparation/refresh. |
+| ETW/SOCKET ingress | Separate bounded queues; callbacks wake attribution without taking the packet lock. |
 | Immutable ownership index | Atomic publication/read; no lookup lock or native work. |
 | WinDivert send/shutdown/close | `_sendGate`; blocking receive is outside the lock. |
 | NAT dictionaries | Short NAT lock; each entry separately owns relay cancellation. |
@@ -590,9 +683,9 @@ even if no further input arrives.
 | UDP ownership validity | Sticky invalidation under `RouteFlowOwner` lock; its callback only reads the immutable index. |
 | Shared timestamps and NAT flags | Interlocked long accesses and volatile flags, including x86. |
 
-The UDP ownership callback never takes the packet lock: send/receive workers can
-invoke it while packet processing holds the packet lock and checks session
-ownership. Taking both locks in opposite order would deadlock.
+UDP validity callbacks never take the packet lock: they read immutable policy
+and ownership snapshots, and the reply callback maintains its own sticky validity
+flag. Taking both locks in opposite order would deadlock.
 
 Other limits are 2048 active TCP relays and 2048 active UDP endpoint sessions,
 15-second outbound setup, ten-second core readiness and 120-second retention of
@@ -619,6 +712,8 @@ before retiring cores. Engine disposal stops producers and awaits worker tasks
 before snapshotting remaining TCP and UDP tasks: a final accept/capture iteration
 can otherwise register a task after disposal's initial snapshot. Only after those
 tasks complete are native/process handles and cancellation resources released.
+The passive socket observer is shut down and joined; the owned ETW session is
+stopped and its worker joined before disposing the refresh semaphore.
 Core jobs, processes, files and the capture lease are owned by this feature;
 the main core and any separate running installation are outside its ownership.
 
@@ -626,8 +721,16 @@ the main core and any separate running installation are outside its ownership.
 
 `WinDivertApi` is the only interception P/Invoke surface. `DivertAddress` has an
 explicit 80-byte layout: a 16-byte header and a 64-byte union. Although the
-NETWORK member used here is only eight bytes, shrinking the managed structure
-to that member would corrupt native reads/writes. The bindings use Cdecl,
+NETWORK member is only eight bytes, shrinking the managed structure
+to that member would corrupt native reads/writes. SOCKET metadata shares the
+union: PID is at byte 32, addresses at 36/52, ports at 68/70 and protocol at 72.
+The Event field occupies bits 8..15 of the flags word. It is masked to eight bits
+before converting to a byte: flags such as Sniffed and Outbound occupy higher
+bits and otherwise trigger an overflow in this checked-arithmetic project.
+Regression tests decode bind/connect/close events with all combinations of the
+eight defined upper flags, without opening a WinDivert handle.
+WinDivert's four-word host-order addresses are converted to network-order IP
+bytes, including IPv4-mapped normalization. The bindings use Cdecl,
 pointer-sized handles, and Win32 boolean marshaling.
 
 Runtime support checks require both process and OS architecture to be x86/x64
@@ -657,9 +760,10 @@ cover these boundaries:
 | Test file | Behaviors to inspect |
 | --- | --- |
 | `LifecycleTests.cs` | Persistence, startup restoration, explicit disable, save failures, and failed manual enable. |
-| `RuleEditorTests.cs` | Spaced/quoted paths, name/path precedence, old destination values, draft preservation, row flags, picker filtering, and non-administrator behavior. |
-| `ProfileConfigTests.cs` | Isolated authenticated UDP listener, copied block rules, commented domains, effective template invalidation, snapshots, and final profile/balancer preservation. |
+| `RuleEditorTests.cs`, `SettingsTests.cs`, `LifecycleTests.cs` | Picker behavior, settings persistence, non-administrator state, retired-rule compatibility and retry/reload synchronization. |
 | `ProcessTreeTests.cs` | Own/ancestor precedence, exited parents, recycled PIDs, excluded subtrees, and native read-only process timing. |
+| `ProcessEventDecoderTests.cs` | Binary ETW schemas, variable-length SIDs, exact FILETIMEs, package identity, truncation and unknown-version rejection. |
+| `EventAttributionTests.cs` | Delayed short-lived ancestry, sequence matching, historical PID/socket ownership, shared binds, lifecycle gaps, queue overflow, observer failure/health-check races, native metadata and path normalization. |
 | `OwnerTableTests.cs` | Real dual-stack TCP/UDP owner tables parsed into the production index. |
 | `AttributionTests.cs` | Indexed lookup cost, ownership changes, bounded deferral, selective TCP retirement and native socket closure. |
 | `RuntimeTests.cs` | Staging/reuse, rollback, cancellation at commitment, failure observation and exclusive capture ownership. |
@@ -667,12 +771,14 @@ cover these boundaries:
 | `PacketBatchTests.cs` | Mixed IP framing, metadata alignment, maximum packet size, bounded flushing, owned output, and no replay after injection failure. |
 | `FragmentTests.cs` | Out-of-order assembly, early unselected bypass, policy invalidation, SYN/reflection exceptions, overlap and expiry. |
 | `SocksTests.cs` | Current active listener, authentication, split replies, domain bind replies, IPv6, framing, and failed-method behavior. |
-| `UdpSessionTests.cs` | Byte budget and release, pooled buffer ownership on send/rejection/cancellation/failure, exact wire/reply payloads from empty through large datagrams, queued ownership, stale/reused owners, multi-peer association identity, actual reply peers, domain relay endpoints, and unavailable interfaces. |
+| `UdpSessionTests.cs` | Byte budget and release, pooled buffer ownership on send/rejection/cancellation/failure, exact wire/reply payloads from empty through large datagrams, queued ownership, sends after process exit with discarded replies, stale/reused owners, multi-peer association identity, actual reply peers, domain relay endpoints, and internal endpoint preparation. |
 | `ShutdownTests.cs` | Accept reset/abort recovery, fatal listener shutdown, cancellation during handshake stages, and late task registration during disposal. |
 
 Most tests use synthetic packet data, injected ownership/runtime operations, or
 owned loopback sockets. Windows-specific tests also read native process/socket
-tables without starting WinDivert. Some platform-dependent tests return early
+tables without starting WinDivert or an ETW session. Process/socket event tests
+feed deterministic records through the production history and decision code.
+Some platform-dependent tests return early
 when Windows or IPv6 is unavailable, so a passing non-Windows suite does not
 establish coverage of those paths.
 
