@@ -125,7 +125,7 @@ public class PacketTests
         {
             Protocol = 6
         };
-        var rule = new AppRouteRule();
+        var rule = RouteTestFactory.Target();
         var old = table.GetOrAdd(flow, rule, 100);
         old.Accepted = true;
         await ReferenceEquals(table.Find(flow, 100), old).Should().BeTrue(); // Retransmitted SYN.
@@ -151,7 +151,7 @@ public class PacketTests
             LocalAddress = IPAddress.Parse("fe80::1%7"),
             RemoteAddress = IPAddress.Parse("fe80::2%7")
         };
-        var entry = table.GetOrAdd(flow, new(), 100);
+        var entry = table.GetOrAdd(flow, RouteTestFactory.Target(), 100);
         await ReferenceEquals(table.Reverse(IPAddress.Parse("fe80::1%99"), IPAddress.Parse("fe80::2%99"), entry.TranslatedPort), entry).Should().BeTrue();
         await table.Reverse(IPAddress.Parse("fe80::1%99"), IPAddress.Parse("fe80::3%99"), entry.TranslatedPort).Should().BeNull();
         await entry.Flow.LocalAddress.ScopeId.Should().BeEqualTo(7L);
@@ -162,7 +162,7 @@ public class PacketTests
     public async Task SameSourcePortDoesNotMixConnectionsOrAddressFamilies()
     {
         var table = new RouteNatTable();
-        var rule = new AppRouteRule();
+        var rule = RouteTestFactory.Target();
         var first = Flow(false) with
         {
             Protocol = 6

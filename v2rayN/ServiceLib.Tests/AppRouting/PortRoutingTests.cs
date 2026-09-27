@@ -15,9 +15,9 @@ public class PortRoutingTests
     private static RouteSharedRules Rules(params RulesItem[] rules) => new(new() { RuleSet = JsonUtils.Serialize(rules) });
     private static RouteProcessInfo Process(int pid = 20, string name = "client.exe", int parent = 0) =>
         new(new(pid, pid), parent, name, "C:/Apps/" + name, PackageFamily: "");
-    private static RouteSharedPolicy Policy(RouteSharedRules rules) => new(rules, (_, _, _) => Task.FromResult(new RouteSocksEndpoint(12345)));
+    private static RouteSharedPolicy Policy(RouteSharedRules rules) => new(rules, (_, _) => Task.FromResult(new RouteSocksEndpoint(12345)));
     private static RouteDecision Decision(RouteSharedPolicy policy, int pid = 20) =>
-        new(RouteDecisionKind.Selected, Process(pid).Key, policy.Select([Process(pid)], null));
+        new(RouteDecisionKind.Selected, Process(pid).Key, policy.Select([Process(pid)]));
 
     [Test]
     [Arguments(false)]
@@ -61,7 +61,7 @@ public class PortRoutingTests
         rule.Blocks!.Filters.Add(new() { Selector = selector, Values = [value] });
         var rules = Rules(rule);
         await rules.Ports.Should().BeNull();
-        await Policy(rules).Select([Process()], null).Should().BeNull();
+        await Policy(rules).Select([Process()]).Should().BeNull();
     }
 
     [Test]
@@ -77,7 +77,7 @@ public class PortRoutingTests
             var catchAll = Ports(ports, network);
             var rules = Rules(catchAll);
             await rules.HasCaptureSelectors.Should().BeFalse();
-            await Policy(rules).Select([Process()], null).Should().BeNull();
+            await Policy(rules).Select([Process()]).Should().BeNull();
             var combined = Rules(Ports("123", "udp"), catchAll);
             var selected = Decision(Policy(combined));
             await selected.ForFlow(PacketTests.Flow(false) with { Protocol = 6, RemotePort = 443 }).Kind.Should().BeEqualTo(RouteDecisionKind.Unselected);
@@ -105,7 +105,7 @@ public class PortRoutingTests
     public async Task ProtectedAndExcludedProcessesAndTheirChildrenRemainOutsideCapture()
     {
         var policy = Policy(Rules(Ports()));
-        var tree = new RouteProcessTree(new([], policy), [40]);
+        var tree = new RouteProcessTree(policy, [40]);
         var processes = new[] { Process(), Process(30, "xray.exe"), Process(40), Process(50, parent: 30), Process(60, parent: 40) };
         tree.Update(processes);
         var flow = PacketTests.Flow(false) with { RemotePort = 123 };
@@ -115,17 +115,14 @@ public class PortRoutingTests
     }
 
     [Test]
-    public async Task ExistingApplicationAndFallbackSelectionsStillCaptureTheirOtherPorts()
+    public async Task ApplicationSelectionsCaptureTheirOtherPortsWhilePortOnlyTargetsStayRestricted()
     {
         var process = new RulesItem { Process = ["client.exe"], OutboundTag = Global.ProxyTag };
         var policy = Policy(Rules(Ports(), process));
         var flow = PacketTests.Flow(false) with { RemotePort = 443 };
         await Decision(policy).ForFlow(flow).Kind.Should().BeEqualTo(RouteDecisionKind.Selected);
-        var fallback = new AppRouteRule { Kind = AppRouteKind.Block, ExecutablePath = "other.exe", MatchByName = true };
-        var rule = policy.Select([Process(name: "other.exe")], fallback);
-        await new RouteDecision(RouteDecisionKind.Selected, Process().Key, rule).ForFlow(flow).Kind.Should().BeEqualTo(RouteDecisionKind.Selected);
-        await rule!.CapturePorts.Should().BeNull();
-        await new RoutePolicy([], [], Policy(Rules(Ports("443")))).Retains(rule).Should().BeFalse();
+        var rule = policy.Select([Process(name: "other.exe")]);
+        await new RouteDecision(RouteDecisionKind.Selected, Process().Key, rule).ForFlow(flow).Kind.Should().BeEqualTo(RouteDecisionKind.Unselected);
     }
 
     [Test]

@@ -7,7 +7,7 @@ public partial class AppRoutingPackageWindow : WindowBase<AppRoutingPackageViewM
     public AppRoutingPackageWindow()
     {
         InitializeComponent();
-        Loaded += async (_, _) => { if (ViewModel.ShowName) { txtName.Focus(); } await ViewModel.Initialize(); };
+        Loaded += async (_, _) => await ViewModel.Initialize();
         btnCancel.Click += (_, _) => Close(false);
         btnSave.Click += (_, _) => { if (ViewModel.CanConfirm) { Close(true); } };
     }

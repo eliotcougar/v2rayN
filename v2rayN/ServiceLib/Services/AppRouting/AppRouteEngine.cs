@@ -37,10 +37,10 @@ internal sealed class AppRouteEngine : IRouteEngine
     private int _waitingForOwner;
     public Task<Exception?> Completion => _completion.Task;
 
-    public AppRouteEngine(IEnumerable<AppRouteRule> rules, IEnumerable<int> excludedProcesses, Action<string> error,
+    public AppRouteEngine(Action<string> error,
         Func<RouteInterfacePolicy>? interfaces = null)
     {
-        _routing = new(new(rules.ToList(), excludedProcesses), new([], [], _ => RouteDecision.Unresolved, 0));
+        _routing = new(new(null, []), new([], [], _ => RouteDecision.Unresolved, 0));
         _error = error;
         _getInterfaces = interfaces ?? (() => RouteInterfacePolicy.All);
         _fragments = new(ClassifyFragment, (address, protocol, local, remote) =>
@@ -81,9 +81,9 @@ internal sealed class AppRouteEngine : IRouteEngine
         return Match(flow).Kind;
     }
 
-    public async Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token, RouteSharedPolicy? shared = null)
+    public async Task ApplyAsync(RouteSharedPolicy routes, IEnumerable<int> excludedProcesses, CancellationToken token)
     {
-        var policy = new RoutePolicy(rules, excludedProcesses, shared);
+        var policy = new RoutePolicy(routes, excludedProcesses);
         var owners = await Task.Run(() => _attribution.Read(policy));
         lock (_packetGate)
         {
@@ -347,12 +347,11 @@ internal sealed class AppRouteEngine : IRouteEngine
                 var match = Match(flow, arrived, requireFreshSnapshot: packet.IsTcpSyn, timestamp: address.Timestamp);
                 if (DeferIfUnresolved(match))
                 { return; }
-                if (match.Kind == RouteDecisionKind.Unselected || match.Rule?.Kind == AppRouteKind.Direct)
+                if (match.Kind == RouteDecisionKind.Unselected)
                 {
                     PassThrough();
                     return;
                 }
-                if (match.Rule?.Kind == AppRouteKind.Block) { return; }
                 // Existing connections need an application reconnect; do not leak their remaining packets.
                 if (!packet.IsTcpSyn)
                 {
@@ -374,9 +373,8 @@ internal sealed class AppRouteEngine : IRouteEngine
             var match = Match(flow, timestamp: address.Timestamp);
             if (DeferIfUnresolved(match))
             { return; }
-            if (match.Kind == RouteDecisionKind.Unselected || match.Rule?.Kind == AppRouteKind.Direct)
+            if (match.Kind == RouteDecisionKind.Unselected)
             { PassThrough(); return; }
-            if (match.Rule?.Kind == AppRouteKind.Block) { return; }
             var key = new UdpEndpoint(match.Process!.Value, flow.LocalAddress, flow.LocalPort, match.Rule!.Id, address.InterfaceIndex, match.Endpoint);
             _udp.TryGetValue(key, out var session);
             if (session != null && !session.IsUsable)
@@ -411,20 +409,19 @@ internal sealed class AppRouteEngine : IRouteEngine
     private RouteUdpSession CreateUdpSession(RouteFlow flow, RouteDecision selected, DivertAddress replyAddress)
     {
         var rule = selected.Rule!;
-        var signature = RoutePolicy.Signature(rule);
         var originalInterfaces = _interfaces;
         var owner = new RouteFlowOwner(selected.Process!.Value, () =>
         {
             if (!_getInterfaces().Retains(originalInterfaces, replyAddress.InterfaceIndex,
                     flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6)) { return null; }
             var current = Match(flow);
-            return current.Kind == RouteDecisionKind.Selected && current.Rule?.Id == rule.Id && current.Endpoint == selected.Endpoint ? current.Process : null;
+            return current.Kind == RouteDecisionKind.Selected && ReferenceEquals(current.Rule, rule) && current.Endpoint == selected.Endpoint ? current.Process : null;
         });
         replyAddress.Outbound = false;
         return new(rule, new(flow.RemoteAddress, flow.RemotePort),
             (peer, payload) => SendUdpReply(flow with { RemoteAddress = peer.Address, RemotePort = (ushort)peer.Port }, replyAddress, payload),
             _stop.Token, Report, owner.IsCurrent, canSend: () => !_stop.IsCancellationRequested &&
-                Volatile.Read(ref _routing).Policy.Retains(rule.Id, signature) && _getInterfaces().Retains(originalInterfaces,
+                Volatile.Read(ref _routing).Policy.Retains(rule) && _getInterfaces().Retains(originalInterfaces,
                     replyAddress.InterfaceIndex, flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6));
     }
 

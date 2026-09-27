@@ -156,7 +156,7 @@ public class InterfaceTests
     {
         if (!OperatingSystem.IsWindows()) { return; }
         var policy = new RouteInterfacePolicy(new() { MonitorNewInterfaces = false }, []);
-        await using var engine = new AppRouteEngine([], [], _ => { }, () => policy);
+        await using var engine = new AppRouteEngine(_ => { }, () => policy);
         InitializeEngine(engine);
         var bytes = Packet(ipv6, tcp);
         var original = bytes.ToArray();
@@ -180,7 +180,7 @@ public class InterfaceTests
     {
         if (!OperatingSystem.IsWindows()) { return; }
         var policy = new RouteInterfacePolicy(new() { MonitorNewInterfaces = false }, []);
-        await using var engine = new AppRouteEngine([], [], _ => { }, () => policy);
+        await using var engine = new AppRouteEngine(_ => { }, () => policy);
         InitializeEngine(engine);
         var packet = Packet(ipv6, tcp, 32);
         var last = FragmentTests.Fragment(packet, 16, 24, false);
@@ -200,7 +200,7 @@ public class InterfaceTests
     {
         if (!OperatingSystem.IsWindows()) { return; }
         var policy = RouteInterfacePolicy.All;
-        await using var engine = new AppRouteEngine([], [], _ => { }, () => policy);
+        await using var engine = new AppRouteEngine(_ => { }, () => policy);
         InitializeEngine(engine);
         var output = new RoutePacketBatch((_, _) => throw new InvalidOperationException("Unresolved monitored packet must be deferred."));
         Capture(engine, Packet(false, false), new() { InterfaceIndex = 123 }, output);
@@ -215,8 +215,10 @@ public class InterfaceTests
         var adapters = new[] { Adapter("a", 1), Adapter("b", 2) };
         var options = RouteInterfaceCatalog.Discover(new(), adapters);
         var policy = new RouteInterfacePolicy(options, adapters);
-        var rule = new AppRouteRule { ExecutablePath = "fixture.exe", MatchByName = true };
-        await using var engine = new AppRouteEngine([rule], [], _ => { }, () => policy);
+        var selected = RouteTestFactory.Process("fixture.exe");
+        var rule = selected.Target;
+        await using var engine = new AppRouteEngine(_ => { }, () => policy);
+        await engine.ApplyAsync(selected.Policy, [], default);
         InitializeEngine(engine);
         var nat = Field<RouteNatTable>(engine, "_nat");
         var first = nat.GetOrAdd(PacketTests.Flow(false) with { Protocol = 6 }, rule, 1);
@@ -240,7 +242,7 @@ public class InterfaceTests
     {
         if (!OperatingSystem.IsWindows()) { return; }
         var policy = new RouteInterfacePolicy(new() { MonitorNewInterfaces = false }, []);
-        await using var engine = new AppRouteEngine([], [], _ => { }, () => policy);
+        await using var engine = new AppRouteEngine(_ => { }, () => policy);
         InitializeEngine(engine);
         var bytes = Packet(false, true, 32);
         var flow = RoutePacket.Parse(bytes)!.Flow;
@@ -250,7 +252,7 @@ public class InterfaceTests
         // to exercise the conservative reply-reassembly path.
         if (fragmented)
         {
-            Field<RouteNatTable>(engine, "_nat").GetOrAdd(flow with { LocalPort = 1234 }, new(), 0);
+            Field<RouteNatTable>(engine, "_nat").GetOrAdd(flow with { LocalPort = 1234 }, RouteTestFactory.Target(), 0);
         }
         var count = 0;
         var output = new RoutePacketBatch((_, _) => count++);
@@ -319,7 +321,7 @@ public class InterfaceTests
         var adapters = new[] { Adapter("a", 1), Adapter("b", 2) };
         var options = RouteInterfaceCatalog.Discover(new(), adapters);
         var policy = new RouteInterfacePolicy(options, adapters);
-        await using var engine = new AppRouteEngine([], [], _ => { }, () => policy);
+        await using var engine = new AppRouteEngine(_ => { }, () => policy);
         InitializeEngine(engine);
         var output = new RoutePacketBatch((_, _) => throw new InvalidOperationException("Unresolved traffic must wait."));
         Capture(engine, Packet(false, false), new() { InterfaceIndex = 1 }, output);

@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.Threading.Channels;
 using ServiceLib.Services.AppRouting;
 
@@ -44,7 +44,7 @@ public class UdpSessionTests
             }
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
+        using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port),
             destination, (peer, payload) => replies.Writer.TryWrite((peer, payload.ToArray())), timeout.Token, errors.Enqueue, () => true, pool);
         try
         {
@@ -95,7 +95,7 @@ public class UdpSessionTests
             if (failAssociation) { await stream.WriteAsync(new byte[] { 5, 255 }, timeout.Token); }
             else { await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0); }
         });
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
+        using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port),
             new(IPAddress.Loopback, 443), (_, _) => { }, timeout.Token, errors.Add, () => true, pool);
         await greetingRead.Task.WaitAsync(timeout.Token);
         for (var i = 0; i < 65; i++) { session.Send(new(IPAddress.Loopback, 443), [1]); }
@@ -143,7 +143,7 @@ public class UdpSessionTests
             await udp.SendAsync(RouteConnector.WrapDatagram(replyingPeer, new byte[] { 3 }), one.RemoteEndPoint, timeout.Token);
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) }, first,
+        using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port), first,
             (peer, _) => received.TrySetResult(peer), timeout.Token, ex => received.TrySetException(ex), () => true, pool);
         try
         {
@@ -196,11 +196,7 @@ public class UdpSessionTests
             resumed.SetResult(next.Buffer[RouteConnector.UnwrapDatagram(next.Buffer, destination)]);
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
-        using var session = new RouteUdpSession(new()
-        {
-            Kind = AppRouteKind.Profile,
-            ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port)
-        }, destination, (_, _) => { }, timeout.Token, ex => drained.TrySetException(ex), () => true);
+        using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port), destination, (_, _) => { }, timeout.Token, ex => drained.TrySetException(ex), () => true);
         try
         {
             for (byte index = 0; index < 8; index++)
@@ -254,7 +250,7 @@ public class UdpSessionTests
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
         var destination = new IPEndPoint(PacketTests.Flow(ipv6).RemoteAddress, 443);
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
+        using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port),
             destination, (_, _) => { }, timeout.Token, errors.Add, () => true, pool);
         // The SOCKS header makes this too large for the outer IPv4 UDP socket.
         try
@@ -307,11 +303,7 @@ public class UdpSessionTests
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
         var errors = new List<Exception>();
-        using var session = new RouteUdpSession(new()
-        {
-            Kind = AppRouteKind.Profile,
-            ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port)
-        }, new(IPAddress.Loopback, 12345), (_, _) => { }, timeout.Token, errors.Add, () => Volatile.Read(ref ownsFlow) != 0, pool);
+        using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port), new(IPAddress.Loopback, 12345), (_, _) => { }, timeout.Token, errors.Add, () => Volatile.Read(ref ownsFlow) != 0, pool);
         session.Send(new(IPAddress.Loopback, 12345), [1, 2, 3]);
         session.Send(new(IPAddress.Loopback, 12345), [4, 5, 6]);
         queued.SetResult();
@@ -361,7 +353,7 @@ public class UdpSessionTests
                 // may close that socket with RST instead of FIN; both release it.
             }
         });
-        using var session = new RouteUdpSession(new() { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
+        using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port),
             destination, (_, _) => Interlocked.Increment(ref replies), timeout.Token, errors.Enqueue,
             () => { checkedReply.TrySetResult(); return false; }, pool, canSend: () => true);
         try
@@ -422,11 +414,7 @@ public class UdpSessionTests
                 await stream.WriteAsync(new byte[] { 5, 255 }, timeout.Token);
             });
             var errors = new List<Exception>();
-            using var session = new RouteUdpSession(new()
-            {
-                Kind = AppRouteKind.Profile,
-                ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port)
-            },
+            using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port),
                 new(IPAddress.Loopback, 12345), (_, _) => { }, timeout.Token, errors.Add, () => true);
             await session.Completion.WaitAsync(timeout.Token);
             await session.IsUsable.Should().BeFalse();
@@ -489,7 +477,7 @@ public class UdpSessionTests
                 await (await stream.ReadAsync(one, timeout.Token)).Should().BeEqualTo(0);
                 controlClosed.SetResult();
             });
-            using var session = new RouteUdpSession(new AppRouteRule { Kind = AppRouteKind.Profile, ProxyEndpoint = new(((IPEndPoint)tcp.LocalEndpoint).Port) },
+            using var session = new RouteUdpSession(RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port),
                 destination, (_, data) => done.TrySetResult(data.ToArray()), timeout.Token, ex => done.TrySetException(ex), () => Volatile.Read(ref ownsFlow) != 0);
             session.Send(destination, payload);
             if (loseOwnership)
@@ -524,7 +512,7 @@ public class UdpSessionTests
             new RouteOwnerTable.Row(flow.LocalAddress, flow.LocalPort, flow.RemoteAddress, flow.RemotePort, 200),
             new RouteOwnerTable.Row(IPAddress.IPv6Any, flow.LocalPort, flow.RemoteAddress, flow.RemotePort, 300)
         };
-        var snapshot = new RouteAttributionSnapshot(rows, [], pid => new(RouteDecisionKind.Selected, new(pid, 0), new()), 0);
+        var snapshot = new RouteAttributionSnapshot(rows, [], pid => new(RouteDecisionKind.Selected, new(pid, 0), RouteTestFactory.Target()), 0);
         await snapshot.Find(flow).Process!.Value.Pid.Should().BeEqualTo(200);
     }
 

@@ -22,10 +22,10 @@ internal sealed class RouteSharedProfile : IRouteProfile
         SharedPolicy = new(rules, PrepareEndpoint);
     }
 
-    public static async Task<IRouteProfile> StartAsync(string json, RouteSharedRules rules, IReadOnlyList<AppRouteRule> fallbacks,
+    public static async Task<IRouteProfile> StartAsync(string json, RouteSharedRules rules,
         string core, Dictionary<string, string>? environment, CancellationToken token)
     {
-        var template = new RouteSharedTemplate(json, rules, fallbacks);
+        var template = new RouteSharedTemplate(json, rules);
         var apiPort = ReservePort();
         template.Root["api"] = new JsonObject { ["tag"] = "app-routing-api", ["listen"] = $"127.0.0.1:{apiPort}",
             ["services"] = new JsonArray("HandlerService", "RoutingService") };
@@ -40,11 +40,11 @@ internal sealed class RouteSharedProfile : IRouteProfile
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
-    private async Task<RouteSocksEndpoint> PrepareEndpoint(IReadOnlyList<string> markers, AppRouteRule? fallback, CancellationToken token)
+    private async Task<RouteSocksEndpoint> PrepareEndpoint(IReadOnlyList<string> markers, CancellationToken token)
     {
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _stop.Token);
         token = cancellation.Token;
-        var key = string.Join(',', markers) + ":" + fallback?.Id;
+        var key = string.Join(',', markers);
         await _gate.WaitAsync(token);
         try
         {
@@ -55,7 +55,7 @@ internal sealed class RouteSharedProfile : IRouteProfile
             if (Completion.IsCompleted) { throw new IOException("The shared application-routing core has stopped."); }
             var tag = "app-match-" + Guid.NewGuid().ToString("N");
             var endpoint = new RouteSocksEndpoint(ReservePort(), "app-route", Convert.ToHexString(RandomNumberGenerator.GetBytes(24)));
-            var nativeRules = _template.RulesFor(markers, fallback, tag);
+            var nativeRules = _template.RulesFor(markers, tag);
             var inbound = RouteSharedTemplate.Inbound(tag, endpoint);
             try
             {
@@ -96,9 +96,8 @@ internal sealed class RouteSharedTemplate
     public JsonObject Root { get; }
     private readonly Dictionary<string, JsonNode> _branches = [];
     private readonly JsonNode _final;
-    private readonly Dictionary<string, string> _fallbackTags = [];
 
-    public RouteSharedTemplate(string json, RouteSharedRules rules, IReadOnlyList<AppRouteRule> fallbacks)
+    public RouteSharedTemplate(string json, RouteSharedRules rules)
     {
         Root = JsonNode.Parse(json)!.AsObject();
         var native = Root["routing"]!["rules"]!.AsArray();
@@ -113,27 +112,13 @@ internal sealed class RouteSharedTemplate
         // Keep internal DNS routes; the readiness listener cannot proxy arbitrary traffic.
         native.Add(new JsonObject { ["type"] = "field", ["inboundTag"] = new JsonArray("app-routing-ready"), ["outboundTag"] = Global.BlockTag });
         Root["inbounds"] = new JsonArray(Inbound("app-routing-ready", new(10808, "app-route", "template")));
-        foreach (var fallback in fallbacks.Where(r => r.Kind != AppRouteKind.ActiveProfile))
-        {
-            if (fallback.Kind is AppRouteKind.Direct or AppRouteKind.Block)
-            {
-                _fallbackTags.Add(fallback.Id, fallback.Kind == AppRouteKind.Direct ? Global.DirectTag : Global.BlockTag);
-                continue;
-            }
-            var tag = "app-fallback-" + _fallbackTags.Count;
-            _fallbackTags.Add(fallback.Id, tag);
-            Root["outbounds"]!.AsArray().Add(FallbackOutbound(fallback, tag));
-        }
     }
 
-    internal JsonArray RulesFor(IReadOnlyList<string> markers, AppRouteRule? fallback, string inbound)
+    internal JsonArray RulesFor(IReadOnlyList<string> markers, string inbound)
     {
         var result = new JsonArray();
         foreach (var marker in markers) { result.Add(_branches[marker].DeepClone()); }
-        var final = _final.DeepClone();
-        if (fallback != null && _fallbackTags.TryGetValue(fallback.Id, out var tag))
-        { final["outboundTag"] = tag; final.AsObject().Remove("balancerTag"); }
-        result.Add(final);
+        result.Add(_final.DeepClone());
         for (var index = 0; index < result.Count; index++)
         {
             result[index]!["inboundTag"] = new JsonArray(inbound);
@@ -150,12 +135,4 @@ internal sealed class RouteSharedTemplate
         ["sniffing"] = new JsonObject { ["enabled"] = true, ["destOverride"] = new JsonArray("http", "tls", "quic"), ["routeOnly"] = true },
     };
 
-    private static JsonObject FallbackOutbound(AppRouteRule rule, string tag)
-    {
-        var endpoint = rule.ProxyEndpoint ?? throw new InvalidOperationException("Fallback profiles must be prepared before the shared routing core.");
-        var server = new JsonObject { ["address"] = Global.Loopback, ["port"] = endpoint.Port };
-        if (endpoint.Username.Length > 0)
-        { server["users"] = new JsonArray(new JsonObject { ["user"] = endpoint.Username, ["pass"] = endpoint.Password }); }
-        return new() { ["tag"] = tag, ["protocol"] = "socks", ["settings"] = new JsonObject { ["servers"] = new JsonArray(server) } };
-    }
 }

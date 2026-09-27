@@ -1,4 +1,4 @@
-﻿using ServiceLib.Services.AppRouting;
+using ServiceLib.Services.AppRouting;
 
 namespace ServiceLib.Tests.AppRouting;
 
@@ -13,33 +13,80 @@ public class RuntimeTests
     {
         public readonly TaskCompletionSource<Exception?> End = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<Exception?> Completion => End.Task;
-        public IReadOnlyList<AppRouteRule> Rules = [];
+        public RouteSharedPolicy? Routes;
+        public int Excluded;
         public bool Reject;
+        public bool ThrowOnDispose;
         public Action? OnCommit;
-        public Task ApplyAsync(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excludedProcesses, CancellationToken token, RouteSharedPolicy? shared = null)
+        public Task ApplyAsync(RouteSharedPolicy routes, IEnumerable<int> excludedProcesses, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             if (Reject) { throw new IOException("apply failed"); }
-            Rules = rules;
+            Routes = routes;
+            Excluded = excludedProcesses.Single();
             events.Add("apply");
             OnCommit?.Invoke();
             return Task.CompletedTask;
         }
         public void Start() => events.Add("start");
-        public ValueTask DisposeAsync() { events.Add("stop"); End.TrySetResult(null); return ValueTask.CompletedTask; }
+        public ValueTask DisposeAsync()
+        {
+            events.Add("stop"); End.TrySetResult(null);
+            if (ThrowOnDispose) { throw new IOException("engine cleanup failed"); }
+            return ValueTask.CompletedTask;
+        }
     }
     private sealed class Profile(string name, int port, List<string> events) : IRouteProfile
     {
         public readonly TaskCompletionSource End = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task Completion => End.Task;
         public RouteSocksEndpoint Endpoint { get; } = new(port);
+        public RouteSharedPolicy SharedPolicy { get; } = RouteTestFactory.Policy();
         public int ProcessId => port;
         public bool Disposed;
-        public ValueTask DisposeAsync() { Disposed = true; events.Add("dispose " + name); End.TrySetResult(); return ValueTask.CompletedTask; }
+        public bool ThrowOnDispose;
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true; events.Add("dispose " + name); End.TrySetResult();
+            if (ThrowOnDispose) { throw new IOException("core cleanup failed"); }
+            return ValueTask.CompletedTask;
+        }
     }
-    private static AppRouteRule Rule() => new() { Id = "app", ExecutablePath = "app.exe", MatchByName = true, Kind = AppRouteKind.Profile };
-    private static RouteRuntimePlan Plan(AppRouteRule rule, string key, Func<CancellationToken, Task<IRouteProfile>> start) =>
-        new([rule], new Dictionary<string, RouteProfilePlan> { [rule.Id] = new(key, start) });
+    private static RouteProfilePlan Plan(string key, Func<CancellationToken, Task<IRouteProfile>> start) => new(key, start);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NoCaptureSelectorsReleaseAnExistingRuntimeAndNeverStartANewOne(bool running)
+    {
+        var events = new List<string>();
+        var core = new Profile("core", 10001, events);
+        var lease = new Lease();
+        var runtime = new RouteRuntime(() => new Engine(events), () => lease);
+        if (running) { await runtime.ApplyAsync(Plan("one", _ => Task.FromResult<IRouteProfile>(core)), default); }
+        await runtime.ApplyAsync(null, default);
+        await runtime.IsRunning.Should().BeFalse();
+        await core.Disposed.Should().BeEqualTo(running);
+        await lease.Disposed.Should().BeEqualTo(running);
+        if (!running) { await events.Count.Should().BeEqualTo(0); }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CleanupFailureStillReleasesCoreAndCaptureLease(bool engineFailure)
+    {
+        var events = new List<string>();
+        var engine = new Engine(events) { ThrowOnDispose = engineFailure };
+        var core = new Profile("core", 10001, events) { ThrowOnDispose = !engineFailure };
+        var lease = new Lease();
+        var runtime = new RouteRuntime(() => engine, () => lease);
+        await runtime.ApplyAsync(Plan("one", _ => Task.FromResult<IRouteProfile>(core)), default);
+        await Assert.ThrowsAsync<IOException>(() => runtime.StopAsync());
+        await core.Disposed.Should().BeTrue();
+        await lease.Disposed.Should().BeTrue();
+        await runtime.IsRunning.Should().BeFalse();
+    }
 
     [Test]
     public async Task CancellationAtCommitKeepsNewResourcesUntilExplicitStop()
@@ -52,7 +99,7 @@ public class RuntimeTests
         var runtime = new RouteRuntime(() => engine, () => lease);
         try
         {
-            await runtime.ApplyAsync(Plan(Rule(), "one", _ => Task.FromResult<IRouteProfile>(profile)), stop.Token);
+            await runtime.ApplyAsync(Plan("one", _ => Task.FromResult<IRouteProfile>(profile)), stop.Token);
             await stop.IsCancellationRequested.Should().BeTrue();
             await runtime.IsRunning.Should().BeTrue();
             await profile.Disposed.Should().BeFalse();
@@ -64,40 +111,6 @@ public class RuntimeTests
     }
 
     [Test]
-    public async Task LaterPreparationFailureDisposesEarlierCandidateButKeepsSharedCore()
-    {
-        var events = new List<string>();
-        var engine = new Engine(events);
-        var runtime = new RouteRuntime(() => engine, () => new Lease());
-        var old = new Profile("old", 10001, events);
-        var candidate = new Profile("candidate", 10002, events);
-        var rule = Rule();
-        var another = Rule();
-        another.Id = "another";
-        try
-        {
-            var original = Plan(rule, "old", _ => Task.FromResult<IRouteProfile>(old));
-            await runtime.ApplyAsync(original, default);
-            var failed = false;
-            try
-            {
-                await runtime.ApplyAsync(new([rule, another], new Dictionary<string, RouteProfilePlan>
-                {
-                    [rule.Id] = original.Profiles[rule.Id],
-                    [another.Id] = new("candidate", _ => Task.FromResult<IRouteProfile>(candidate)),
-                    ["fails"] = new("fails", _ => throw new IOException("second candidate failed"))
-                }), default);
-            }
-            catch (IOException) { failed = true; }
-            await failed.Should().BeTrue();
-            await old.Disposed.Should().BeFalse();
-            await candidate.Disposed.Should().BeTrue();
-            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10001);
-        }
-        finally { await runtime.StopAsync(); }
-    }
-
-    [Test]
     public async Task ReplacementPreparesWhileOldPolicyRunsAndReusesUnchangedCore()
     {
         var events = new List<string>();
@@ -106,21 +119,21 @@ public class RuntimeTests
         var runtime = new RouteRuntime(() => engine, () => lease);
         var old = new Profile("old", 10001, events);
         var next = new Profile("next", 10002, events);
-        var rule = Rule();
         var ready = new TaskCompletionSource<IRouteProfile>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
-            await runtime.ApplyAsync(Plan(rule, "one", _ => Task.FromResult<IRouteProfile>(old)), default);
-            await runtime.ApplyAsync(Plan(rule, "one", _ => throw new Exception("must reuse")), default);
-            var apply = runtime.ApplyAsync(Plan(rule, "two", _ => ready.Task), default);
+            await runtime.ApplyAsync(Plan("one", _ => Task.FromResult<IRouteProfile>(old)), default);
+            await runtime.ApplyAsync(Plan("one", _ => throw new Exception("must reuse")), default);
+            var apply = runtime.ApplyAsync(Plan("two", _ => ready.Task), default);
             await runtime.IsRunning.Should().BeTrue();
-            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10001);
+            await engine.Excluded.Should().BeEqualTo(10001);
+            await engine.Routes.Should().BeEqualTo(old.SharedPolicy);
             await old.Disposed.Should().BeFalse();
             ready.SetResult(next);
             await apply;
-            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10002);
+            await engine.Excluded.Should().BeEqualTo(10002);
+            await engine.Routes.Should().BeEqualTo(next.SharedPolicy);
             await events.SequenceEqual(new[] { "apply", "start", "apply", "apply", "dispose old" }).Should().BeTrue();
-            await rule.Kind.Should().BeEqualTo(AppRouteKind.Profile);
             await lease.Disposed.Should().BeFalse();
         }
         finally { ready.TrySetResult(next); await runtime.StopAsync(); }
@@ -138,15 +151,14 @@ public class RuntimeTests
         var runtime = new RouteRuntime(() => engine, () => lease);
         var old = new Profile("old", 10001, events);
         var candidate = new Profile("candidate", 10002, events);
-        var rule = Rule();
         try
         {
-            await runtime.ApplyAsync(Plan(rule, "old", _ => Task.FromResult<IRouteProfile>(old)), default);
+            await runtime.ApplyAsync(Plan("old", _ => Task.FromResult<IRouteProfile>(old)), default);
             engine.Reject = applyFailure;
             var failed = false;
             try
             {
-                await runtime.ApplyAsync(Plan(rule, "new", _ => applyFailure ? Task.FromResult<IRouteProfile>(candidate) : throw new IOException("startup failed")), default);
+                await runtime.ApplyAsync(Plan("new", _ => applyFailure ? Task.FromResult<IRouteProfile>(candidate) : throw new IOException("startup failed")), default);
             }
             catch (IOException) { failed = true; }
             await failed.Should().BeTrue();
@@ -154,7 +166,7 @@ public class RuntimeTests
             await old.Disposed.Should().BeFalse();
             await lease.Disposed.Should().BeFalse();
             await candidate.Disposed.Should().BeEqualTo(applyFailure);
-            await engine.Rules.Single().ProxyEndpoint!.Port.Should().BeEqualTo(10001);
+            await engine.Excluded.Should().BeEqualTo(10001);
         }
         finally { await runtime.StopAsync(); }
     }
@@ -167,7 +179,7 @@ public class RuntimeTests
         var runtime = new RouteRuntime(() => new Engine(events), () => lease);
         using var stop = new CancellationTokenSource();
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var start = runtime.ApplyAsync(Plan(Rule(), "slow", async token =>
+        var start = runtime.ApplyAsync(Plan("slow", async token =>
         {
             waiting.SetResult();
             await Task.Delay(Timeout.Infinite, token);
@@ -194,7 +206,7 @@ public class RuntimeTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
         {
-            await runtime.ApplyAsync(Plan(Rule(), "one", _ => Task.FromResult<IRouteProfile>(profile)), timeout.Token);
+            await runtime.ApplyAsync(Plan("one", _ => Task.FromResult<IRouteProfile>(profile)), timeout.Token);
             var failure = runtime.WaitForFailureAsync(timeout.Token);
             if (coreExit) { profile.End.SetResult(); } else { engine.End.SetResult(new IOException("capture failed")); }
             await ((await failure) is IOException).Should().BeTrue();

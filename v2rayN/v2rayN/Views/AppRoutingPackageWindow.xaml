@@ -17,11 +17,6 @@
         <StackPanel Grid.Row="0">
             <TextBlock Text="{Binding Account}" Margin="4,0,4,8" />
             <TextBlock Text="{x:Static resx:ResUI.AppRoutingPackageHelp}" TextWrapping="Wrap" Margin="4,0,4,12" />
-            <StackPanel x:Name="NamePanel">
-            <TextBlock Text="{x:Static resx:ResUI.AppRoutingRuleName}" Margin="4,0" />
-            <TextBox x:Name="txtName" Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="4,4,4,8" Style="{StaticResource DefTextBox}"
-                AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingRuleName}" />
-            </StackPanel>
             <TextBlock Text="{x:Static resx:ResUI.AppRoutingPackageSearch}" Margin="4,0" />
             <TextBox Text="{Binding Search, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="4,4" Style="{StaticResource DefTextBox}"
                 AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingPackageSearch}" />
@@ -35,7 +30,7 @@
             <ItemsControl ItemsSource="{Binding Packages}" HorizontalContentAlignment="Stretch">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanSelect}"
+                        <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                             Height="56" Margin="4,0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center"
                             AutomationProperties.Name="{Binding Name}">
                             <StackPanel Margin="8,0">

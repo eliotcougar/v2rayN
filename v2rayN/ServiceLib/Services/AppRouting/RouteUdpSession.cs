@@ -1,4 +1,4 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Threading.Channels;
 
 namespace ServiceLib.Services.AppRouting;
@@ -18,8 +18,8 @@ internal sealed class RouteUdpSession : IDisposable
         SingleWriter = true
     });
     private int _queuedBytes;
-    private readonly AppRouteRule _rule;
-    public AppRouteRule Rule => _rule;
+    private readonly RouteTarget _rule;
+    public RouteTarget Rule => _rule;
     private readonly IPEndPoint _destination;
     private readonly Reply _reply;
     private readonly Func<bool> _ownsFlow;
@@ -34,7 +34,7 @@ internal sealed class RouteUdpSession : IDisposable
     private long _lastActivity = Environment.TickCount64;
     public long LastActivity => Interlocked.Read(ref _lastActivity);
 
-    public RouteUdpSession(AppRouteRule rule, IPEndPoint destination, Reply reply, CancellationToken token, Action<Exception> error,
+    public RouteUdpSession(RouteTarget rule, IPEndPoint destination, Reply reply, CancellationToken token, Action<Exception> error,
         Func<bool> ownsFlow, ArrayPool<byte>? buffers = null, Func<bool>? canSend = null)
     {
         _rule = rule;

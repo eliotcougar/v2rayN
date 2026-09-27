@@ -1,4 +1,4 @@
-﻿using ServiceLib.Services.AppRouting;
+using ServiceLib.Services.AppRouting;
 
 namespace ServiceLib.Tests.AppRouting;
 
@@ -18,7 +18,7 @@ public class ShutdownTests
         listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         listener.Listen(1);
         var errors = new ConcurrentQueue<string>();
-        var engine = new AppRouteEngine([], [], errors.Enqueue);
+        var engine = new AppRouteEngine(errors.Enqueue);
         var retried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempts = 0;
         async ValueTask<Socket> Next(CancellationToken token)
@@ -53,7 +53,7 @@ public class ShutdownTests
         listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         listener.Listen(1);
         var errors = new ConcurrentQueue<string>();
-        var engine = new AppRouteEngine([], [], errors.Enqueue);
+        var engine = new AppRouteEngine(errors.Enqueue);
         var listeners = (List<Socket>)typeof(AppRouteEngine).GetField("_listeners", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
         listeners.Add(listener);
         var other = engine.Accept(listener.AcceptAsync);
@@ -105,11 +105,7 @@ public class ShutdownTests
             stalled.SetResult();
             await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0);
         });
-        var rule = new AppRouteRule
-        {
-            Kind = AppRouteKind.Profile,
-            ProxyEndpoint = new(((IPEndPoint)listener.LocalEndpoint).Port, "u", "p")
-        };
+        var rule = RouteTestFactory.Target(((IPEndPoint)listener.LocalEndpoint).Port, "u", "p");
         var errors = new ConcurrentQueue<Exception>();
         using var session = udp ? new RouteUdpSession(rule, new(IPAddress.Loopback, 443),
             (_, _) => { }, stop.Token, errors.Enqueue, () => true) : null;
@@ -146,7 +142,7 @@ public class ShutdownTests
         }
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var engine = new AppRouteEngine([], [], _ => { });
+        var engine = new AppRouteEngine(_ => { });
         // Stage the final accept/capture iteration without opening WinDivert.
         var workers = Workers(engine);
         var connections = (ConcurrentDictionary<long, Task>)typeof(AppRouteEngine).GetField(tasksField, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;

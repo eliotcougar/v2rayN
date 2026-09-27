@@ -26,7 +26,7 @@ public partial class CoreConfigSingboxService
             {
                 case RoutingSelector.Domain:
                     var domains = new List<Rule4Sbox>();
-                    foreach (var value in values.Where(v => !v.StartsWith('#')))
+                    foreach (var value in values)
                     {
                         var domain = new Rule4Sbox();
                         if (!ParseV2Domain(value, domain)) { throw new ArgumentException($"Unsupported sing-box domain: {value}"); }

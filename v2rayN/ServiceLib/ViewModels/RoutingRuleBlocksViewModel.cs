@@ -33,7 +33,7 @@ public partial class RoutingRuleBlocksViewModel : MyReactiveObject, ICloseable
         OutboundTag = source.OutboundTag ?? Global.ProxyTag;
         RuleType = source.RuleType?.ToString();
         Enabled = source.IsEnabled;
-        var filters = source.Blocks?.Filters ?? LegacyFilters(source);
+        var filters = source.Blocks?.Filters ?? RoutingBlockRules.FromLegacy(source).Filters;
         foreach (var filter in filters)
         {
             AddFilter(filter.Selector, filter.Values, filter.Applications);
@@ -83,8 +83,7 @@ public partial class RoutingRuleBlocksViewModel : MyReactiveObject, ICloseable
             }
             else
             {
-                using var picker = new AppRoutingPackageViewModel(Remarks.Trim().Length > 0 ? Remarks : block.Title,
-                    block.Applications.Select(row => row.Value), new Dictionary<string, string>(), showName: false);
+                using var picker = new AppRoutingPackageViewModel(block.Applications.Select(row => row.Value));
                 if (await PickPackages.HandleSafe(picker)) { block.SetPackages(picker.SelectedPackageNames()); }
             }
         });
@@ -149,21 +148,6 @@ public partial class RoutingRuleBlocksViewModel : MyReactiveObject, ICloseable
             return true;
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException) { Error = ex.Message; return false; }
-    }
-
-    private static List<RoutingFilter> LegacyFilters(RulesItem rule)
-    {
-        var filters = new List<RoutingFilter>();
-        void Add(RoutingSelector selector, List<string>? values)
-        { if (values?.Count > 0) { filters.Add(new() { Selector = selector, Values = values }); } }
-        Add(RoutingSelector.Domain, rule.Domain);
-        Add(RoutingSelector.IP, rule.Ip);
-        Add(RoutingSelector.Port, Split(rule.Port));
-        Add(RoutingSelector.Process, rule.Process);
-        Add(RoutingSelector.Protocol, rule.Protocol);
-        if (rule.InboundTag?.SequenceEqual([RoutingBlockRules.LegacyInbound]) != true) { Add(RoutingSelector.InboundTag, rule.InboundTag); }
-        Add(RoutingSelector.Network, Split(rule.Network));
-        return filters;
     }
 
     internal static List<string> Split(string? text) => (text ?? "").Split([',', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct().ToList();
@@ -232,9 +216,9 @@ public partial class RoutingFilterViewModel : MyReactiveObject
         if (IsApplications) { return Applications.Where(row => row.Enabled).Select(row => row.ToModel().MatchValue(Selector)).Distinct().ToList(); }
         if (IsChoices) { return Choices.Where(c => c.Selected).Select(c => c.Value).ToList(); }
         if (Selector == RoutingSelector.Port) { return RoutingRuleBlocksViewModel.Split(Text); }
-        // Commas are meaningful in regexes and executable paths. Only the Port block uses them as separators.
+        // Commas are meaningful in domain regexes. Only the Port block uses them as separators.
         return Text.Split(['\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Select(v => Selector == RoutingSelector.Process ? v.Trim('"') : v).Distinct().ToList();
+            .Distinct().ToList();
     }
 
     internal void AddApplication(RoutingApplicationRow model)

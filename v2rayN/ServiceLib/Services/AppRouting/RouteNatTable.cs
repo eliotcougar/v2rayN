@@ -1,9 +1,9 @@
 namespace ServiceLib.Services.AppRouting;
 
-internal sealed class RouteNatEntry(RouteFlow flow, AppRouteRule rule, ushort translatedPort, uint initialSequence)
+internal sealed class RouteNatEntry(RouteFlow flow, RouteTarget rule, ushort translatedPort, uint initialSequence)
 {
     public RouteFlow Flow { get; } = flow;
-    public AppRouteRule Rule { get; } = rule;
+    public RouteTarget Rule { get; } = rule;
     public ushort TranslatedPort { get; } = translatedPort;
     public uint InitialSequence { get; } = initialSequence;
     private long _lastActivity = Environment.TickCount64;
@@ -59,7 +59,7 @@ internal sealed class RouteNatTable
     private readonly Dictionary<ushort, RouteNatEntry> _reverse = [];
     private int _next = 1024;
 
-    public RouteNatEntry GetOrAdd(RouteFlow flow, AppRouteRule rule, uint initialSequence)
+    public RouteNatEntry GetOrAdd(RouteFlow flow, RouteTarget rule, uint initialSequence)
     {
         lock (_gate)
         {

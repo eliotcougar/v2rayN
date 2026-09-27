@@ -7,6 +7,20 @@ namespace ServiceLib.Tests.AppRouting;
 public class SettingsTests
 {
     [Test]
+    public async Task OldStandaloneRulesAreIgnoredWhilePreferencesAndInterfacesSurvive()
+    {
+        var config = JsonUtils.Deserialize<AppRoutingItem>("""
+            {"Enabled":true,"Rules":[{"Enabled":false,"Kind":"retired","ProfileId":"missing"}],
+             "InterfaceMonitoring":{"MonitorNewInterfaces":false,"Interfaces":[{"Id":"vpn","Name":"VPN","Monitored":false}]}}
+            """)!;
+        await config.Enabled.Should().BeTrue();
+        await config.InterfaceMonitoring.Interfaces.Single().Monitored.Should().BeFalse();
+        await config.InterfaceMonitoring.MonitorNewInterfaces.Should().BeFalse();
+        await JsonUtils.Serialize(config).Contains("rules", StringComparison.OrdinalIgnoreCase).Should().BeFalse();
+        await JsonUtils.Deserialize<AppRoutingItem>("{}")!.Enabled.Should().BeFalse();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task EnablementIsOnlyCommittedWithSuccessfulSettingsSave(bool enabled)

@@ -28,7 +28,7 @@ public class FragmentTests
     public async Task ReflectedTcpFragmentsMustReachReverseNat()
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        await using var engine = new AppRouteEngine([], [], _ => { });
+        await using var engine = new AppRouteEngine(_ => { });
         var ports = (Dictionary<AddressFamily, ushort>)typeof(AppRouteEngine).GetField("_ports", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
         ports[AddressFamily.InterNetwork] = 43210;
         var flow = PacketTests.Flow(false) with { Protocol = 6, LocalPort = 43210 };

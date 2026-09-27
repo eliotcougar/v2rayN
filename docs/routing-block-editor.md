@@ -22,7 +22,10 @@ to their effective values when opening the editor, preserving flags and matching
 behavior. The persisted mode is inferred from the edited value. Folder matching includes
 subfolders and uses a trailing separator, so `C:/Apps/One/` does not match
 `C:/Apps/OneOther/`. The value field can also be edited directly. Package `+` opens
-the package checklist, including its read-only loopback-exemption import. Retained
+the package checklist, including its read-only loopback-exemption import. Search
+preserves hidden selections, and import merges checks with the current selection.
+A package may occur in several rules; main-table order determines the result.
+The common rule header supplies the remark and destination. Retained
 package rows keep their enabled state and Children setting. Windows App rows show
 localized package names when available and fall back to family identifiers.
 Clicking the name heading toggles alphabetical order; package row order has no
@@ -90,6 +93,8 @@ rules. Application rows project only their enabled effective values. Package
 families resolve once per configuration to installation-folder prefixes for
 native core matching. No package executable scan or process/package intersection
 is needed. Missing packages remove only their own alternative.
+Process names preserve case for platforms with case-sensitive executable names;
+Windows identity matching remains case-insensitive.
 
 This native folder approximation identifies binaries installed in a package.
 WinDivert instead uses the process's Windows package identity, including sparse
@@ -111,7 +116,9 @@ constraints, giving each alternative a private marker during generation.
 The observer evaluates application membership using process generations,
 package identities and ancestry. `RouteSharedPolicy` caches a target per observed
 membership combination, independent of PID. No helper process or
-native query is run by packet lookup.
+native query is run by packet lookup. These immutable targets belong to their
+shared core, so reusing that core preserves connections and replacing it retires
+every old target without comparing serialized rules.
 
 `RoutePortCapture` compiles the union of eligible destination ports into two
 65536-bit lookup tables, one per transport (16 KiB per policy). Applications
@@ -147,6 +154,8 @@ separate lifetime jobs and are excluded from capture. Saved routing edits reques
 an immediate normal reload while the routing list remains open. Every reload
 reapplies enabled WinDivert routing, including recovery after an earlier failure;
 turning it off in settings and saving stops interception.
+An enabled configuration with no eligible selectors also releases the runtime,
+while retaining the saved preference for the next routing edit.
 
 References: [Xray router reload implementation](https://github.com/XTLS/Xray-core/blob/v26.9.9/app/router/router.go),
 [add-inbound API client](https://github.com/XTLS/Xray-core/blob/v26.9.9/main/commands/all/api/inbounds_add.go),

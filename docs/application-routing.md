@@ -41,7 +41,12 @@ of working process interception or absence of traffic leaks.
    Existing TCP connections cannot be moved to another route. Disabling routing
    and saving stops interception. Closing settings does not stop it. Normal app
    exit preserves the enabled preference; startup and subsequent reloads retry
-   enabled routing even if an earlier start failed. Errors use normal notifications.
+   enabled routing even if an earlier start failed. Errors appear in the main
+   application log, alongside the shared core's connection records.
+
+An enabled configuration with no eligible application or narrow-port selectors
+keeps the preference but releases the capture engine, observers and shared core.
+Adding an eligible rule and applying routing settings starts them again.
 
 The standalone Application routing window and its rule storage are retired.
 Old preview `AppRouting.Rules` fields are ignored when loading; only enablement

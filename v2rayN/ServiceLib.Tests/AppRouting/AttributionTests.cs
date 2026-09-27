@@ -8,7 +8,7 @@ public class AttributionTests
     public async Task IndexedLookupsDoNotResolveProcessesPerPacketAndPreserveAmbiguity()
     {
         var flow = PacketTests.Flow(false);
-        var rule = new AppRouteRule { Id = "selected" };
+        var rule = RouteTestFactory.Target();
         var decisions = new Dictionary<int, RouteDecision>
         {
             [10] = new(RouteDecisionKind.Selected, new(10, 1), rule),
@@ -32,7 +32,7 @@ public class AttributionTests
         var flow = PacketTests.Flow(false) with { Protocol = 6 };
         var row = new RouteOwnerTable.Row(flow.LocalAddress, flow.LocalPort, flow.RemoteAddress, flow.RemotePort, 10);
         var old = new RouteAttributionSnapshot([row], [], _ => new(RouteDecisionKind.Unselected, new(10, 100)), 1);
-        var current = new RouteAttributionSnapshot([row], [], _ => new(RouteDecisionKind.Selected, new(10, 200), new()), 2);
+        var current = new RouteAttributionSnapshot([row], [], _ => new(RouteDecisionKind.Selected, new(10, 200), RouteTestFactory.Target()), 2);
         var closed = new RouteAttributionSnapshot([], [], _ => throw new Exception(), 3);
         await old.Find(flow).Kind.Should().BeEqualTo(RouteDecisionKind.Unselected);
         await current.Find(flow).Process.Should().BeEqualTo(new RouteProcessKey(10, 200));
@@ -97,14 +97,14 @@ public class AttributionTests
     [Test]
     public async Task PolicyChangeRetiresOnlyAffectedTcpMappings()
     {
-        var first = new AppRouteRule { Id = "first", ExecutablePath = "first.exe", MatchByName = true, Kind = AppRouteKind.ActiveProfile };
-        var second = new AppRouteRule { Id = "second", ExecutablePath = "second.exe", MatchByName = true, Kind = AppRouteKind.ActiveProfile };
+        var first = RouteTestFactory.Process("first.exe");
+        var second = RouteTestFactory.Process("second.exe");
         var nat = new RouteNatTable();
         var flow = PacketTests.Flow(false) with { Protocol = 6 };
-        var kept = nat.GetOrAdd(flow, first, 1);
-        var retired = nat.GetOrAdd(flow with { LocalPort = 12345 }, second, 2);
+        var kept = nat.GetOrAdd(flow, first.Target, 1);
+        var retired = nat.GetOrAdd(flow with { LocalPort = 12345 }, second.Target, 2);
         using var active = retired.BeginRelay(default);
-        nat.Retain(new([first], []));
+        nat.Retain(new(first.Policy, []));
         await kept.Closed.Should().BeFalse();
         await retired.Closed.Should().BeTrue();
         await active.IsCancellationRequested.Should().BeTrue();
@@ -119,7 +119,7 @@ public class AttributionTests
         using var socket = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
         var port = (ushort)((IPEndPoint)socket.Client.LocalEndPoint!).Port;
         var flow = new RouteFlow(17, IPAddress.Loopback, port, IPAddress.Loopback, 12345);
-        var policy = new RoutePolicy([], []);
+        var policy = new RoutePolicy(null, []);
         await source.Read(policy).Find(flow).Kind.Should().BeEqualTo(RouteDecisionKind.Unselected);
         socket.Dispose();
         await source.Read(policy).Find(flow).Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);

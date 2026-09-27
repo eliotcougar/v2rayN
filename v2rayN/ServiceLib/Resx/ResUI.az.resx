@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1908,29 +1908,8 @@ Təyin edildikdə sertifikat sabitlənəcək və "Təhlükəsiz olmayan əlaqəy
   <data name="AppRoutingInterfacesHelp" xml:space="preserve">
     <value>Tətbiq marşrutlaşdırma qaydalarını yalnız seçilmiş interfeyslərə tətbiq edin. Yeni interfeyslər ilk aşkarlandıqda keçidin vəziyyətini qəbul edir; mövcud seçimlər saxlanılır. Seçimi dəyişdikdən sonra marşrutlaşdırılan tətbiqləri yenidən başladın.</value>
   </data>
-  <data name="AppRoutingMonitor" xml:space="preserve">
-    <value>İzlə</value>
-  </data>
-  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
-    <value>Hazırda mövcud deyil</value>
-  </data>
-  <data name="AppRoutingAddProcessRule" xml:space="preserve">
-    <value>Proses qaydası əlavə et</value>
-  </data>
-  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
-    <value>Windows tətbiqi qaydası əlavə et</value>
-  </data>
   <data name="AppRoutingWindowsApps" xml:space="preserve">
     <value>Windows tətbiqləri</value>
-  </data>
-  <data name="AppRoutingRuleName" xml:space="preserve">
-    <value>Qaydanın adı</value>
-  </data>
-  <data name="AppRoutingRuleColumn" xml:space="preserve">
-    <value>Tətbiq / qayda</value>
-  </data>
-  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
-    <value>Windows tətbiqlərini redaktə et</value>
   </data>
   <data name="AppRoutingPackageSearch" xml:space="preserve">
     <value>Paketləri axtar</value>
@@ -1950,20 +1929,11 @@ Təyin edildikdə sertifikat sabitlənəcək və "Təhlükəsiz olmayan əlaqəy
   <data name="AppRoutingPackageUnavailable" xml:space="preserve">
     <value>Bu hesab üçün quraşdırılmayıb</value>
   </data>
-  <data name="AppRoutingPackageAssigned" xml:space="preserve">
-    <value>Artıq “{0}” qaydasına təyin edilib</value>
-  </data>
-  <data name="AppRoutingPackageRequired" xml:space="preserve">
-    <value>Qaydanın adını daxil edin və ən azı bir paket seçin.</value>
-  </data>
-  <data name="AppRoutingPackageConflict" xml:space="preserve">
-    <value>Hər paket yalnız bir aktiv Windows tətbiqi qaydasına aid ola bilər.</value>
-  </data>
   <data name="AppRoutingPackageImport" xml:space="preserve">
     <value>Loopback istisna qaydalarını idxal et</value>
   </data>
   <data name="AppRoutingPackageImportResult" xml:space="preserve">
-    <value>Seçilib: {0}. Uyğun gəlməyən istisnalar: {1}. Artıq təyin edilib: {2}. Windows icazələri dəyişdirilməyib.</value>
+    <value>Seçilib: {0}. Uyğun gəlməyən istisnalar: {1}. Windows icazələri dəyişdirilməyib.</value>
   </data>
   <data name="AppRoutingSelectVisible" xml:space="preserve">
     <value>Görünənləri seç</value>

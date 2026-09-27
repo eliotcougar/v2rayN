@@ -134,6 +134,15 @@ public partial class RoutingBlockTests
         await config.route.rule_set!.Should().Contain(r => r.tag == "geosite-example");
         await combined.rules[2].mode.Should().BeEqualTo("or");
         await combined.rules[2].rules!.Count.Should().BeEqualTo(2);
+
+        // Unix process names are case-sensitive; Windows-only deduplication must not
+        // erase a distinct executable when the shared editor compiles for sing-box.
+        var processRule = Rule((RoutingSelector.Process, []));
+        processRule.Blocks!.Filters[0].Applications = [
+            RoutingApplicationRow.FromValue("Client", RoutingSelector.Process),
+            RoutingApplicationRow.FromValue("client", RoutingSelector.Process)];
+        var unix = CoreConfigSingboxService.CompileBlockRule(processRule, new(), windows: false)!;
+        await unix.rules!.SelectMany(r => r.process_name!).Should().BeEquivalentTo(["Client", "client"]);
     }
 
     [Test]

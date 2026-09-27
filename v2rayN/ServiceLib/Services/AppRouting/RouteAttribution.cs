@@ -1,7 +1,7 @@
 ﻿namespace ServiceLib.Services.AppRouting;
 
 internal enum RouteDecisionKind { Selected, Unselected, Unresolved, Ambiguous }
-internal sealed record RouteDecision(RouteDecisionKind Kind, RouteProcessKey? Process = null, AppRouteRule? Rule = null, ulong Endpoint = 0)
+internal sealed record RouteDecision(RouteDecisionKind Kind, RouteProcessKey? Process = null, RouteTarget? Rule = null, ulong Endpoint = 0)
 {
     public static readonly RouteDecision Unresolved = new(RouteDecisionKind.Unresolved);
     public static readonly RouteDecision Unselected = new(RouteDecisionKind.Unselected);
@@ -10,14 +10,11 @@ internal sealed record RouteDecision(RouteDecisionKind Kind, RouteProcessKey? Pr
         && Rule?.CapturePorts is { } ports && !ports.Matches(flow) ? Unselected : this;
 }
 
-internal sealed class RoutePolicy(IReadOnlyList<AppRouteRule> rules, IEnumerable<int> excluded, RouteSharedPolicy? shared = null)
+internal sealed class RoutePolicy(RouteSharedPolicy? routes, IEnumerable<int> excluded)
 {
-    public AppRouteMatcher Matcher { get; } = new(rules, shared);
+    public RouteSharedPolicy? Routes { get; } = routes;
     public HashSet<int> Excluded { get; } = excluded.Append(Environment.ProcessId).ToHashSet();
-    private readonly Dictionary<string, string> _signatures = rules.ToDictionary(r => r.Id, r => Signature(r));
-    internal static string Signature(AppRouteRule rule) => JsonUtils.Serialize(rule) + (rule.ProxyEndpoint == null ? "" : JsonUtils.Serialize(rule.ProxyEndpoint));
-    public bool Retains(AppRouteRule rule) => Retains(rule.Id, Signature(rule));
-    public bool Retains(string id, string signature) => (_signatures.TryGetValue(id, out var current) && current == signature) || shared?.Retains(id, signature) == true;
+    public bool Retains(RouteTarget target) => Routes?.Retains(target) == true;
 }
 
 /// <summary>Immutable indexed ownership and precomputed process decisions. No native calls on lookup.</summary>
@@ -102,7 +99,7 @@ internal sealed class RouteAttributionSource : IDisposable
 {
     private readonly object _gate = new();
     private readonly RouteProcessSnapshot _processes = new();
-    private readonly RouteProcessTree _tree = new(new([]), []);
+    private readonly RouteProcessTree _tree = new(null, []);
     private readonly RouteSocketHistory _sockets = new();
     private RouteProcessEvents? _processEvents;
     private RouteSocketEvents? _socketEvents;
@@ -125,13 +122,14 @@ internal sealed class RouteAttributionSource : IDisposable
         lock (_gate)
         {
             var readAt = Environment.TickCount64;
-            _tree.SetRules(policy.Matcher, policy.Excluded);
+            _tree.SetRules(policy.Routes, policy.Excluded);
             var updates = new List<RouteProcessInfo>();
-            if (_processEvents == null || readAt - _lastProcessRead >= 1000 || policy.Matcher.HasPackages && !_readPackageIdentity)
+            var hasPackages = policy.Routes?.HasPackages == true;
+            if (_processEvents == null || readAt - _lastProcessRead >= 1000 || hasPackages && !_readPackageIdentity)
             {
-                updates.AddRange(_processes.Read(policy.Matcher.HasPackages).Select(p => p.Exited == null ? p : p with { ExitedAt = Stopwatch.GetTimestamp() }));
+                updates.AddRange(_processes.Read(hasPackages).Select(p => p.Exited == null ? p : p with { ExitedAt = Stopwatch.GetTimestamp() }));
                 _lastProcessRead = readAt;
-                _readPackageIdentity = policy.Matcher.HasPackages;
+                _readPackageIdentity = hasPackages;
             }
             if (_processEvents != null) { updates.AddRange(_processEvents.Drain(flushEvents)); }
             _tree.Update(updates);

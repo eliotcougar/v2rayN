@@ -80,26 +80,21 @@ internal static class RoutingBlockRules
         RoutingSelector.Domain or RoutingSelector.IP or RoutingSelector.Process or RoutingSelector.WindowsApp;
 
     // Match selectors are alternatives; common constraints apply to every alternative.
-    public static List<List<RoutingFilter>> MatchGroups(RoutingRuleBlocks blocks) =>
-        blocks.Filters.Where(f => IsMatch(f.Selector)).Select(f => new List<RoutingFilter> { f }).ToList();
-
     public static List<List<RoutingFilter>> Conjunctions(RoutingRuleBlocks blocks)
     {
-        var groups = MatchGroups(blocks);
-        if (groups.Count == 0) { groups.Add([]); }
-        foreach (var group in groups) { group.AddRange(blocks.Filters.Where(f => !IsMatch(f.Selector))); }
-        return groups;
+        var matches = blocks.Filters.Where(f => IsMatch(f.Selector)).ToList();
+        var constraints = blocks.Filters.Where(f => !IsMatch(f.Selector)).ToList();
+        return matches.Count == 0 ? [constraints] : matches.Select(f => new[] { f }.Concat(constraints).ToList()).ToList();
     }
 
     public static string Describe(RoutingRuleBlocks blocks, Func<RoutingFilter, string> label)
     {
-        var groups = MatchGroups(blocks);
+        var matches = blocks.Filters.Where(f => IsMatch(f.Selector)).ToList();
         var terms = new List<string>();
-        if (groups.Count > 0)
+        if (matches.Count > 0)
         {
-            var alternatives = groups.Select(g => label(g[0]));
-            var expression = string.Join($" {ResUI.RoutingBlocksOr} ", alternatives);
-            terms.Add(groups.Count > 1 ? $"({expression})" : expression);
+            var expression = string.Join($" {ResUI.RoutingBlocksOr} ", matches.Select(label));
+            terms.Add(matches.Count > 1 ? $"({expression})" : expression);
         }
         terms.AddRange(blocks.Filters.Where(f => !IsMatch(f.Selector)).Select(label));
         return string.Join($" {ResUI.RoutingBlocksAnd} ", terms);
@@ -121,10 +116,26 @@ internal static class RoutingBlockRules
         return new RulesItem
         {
             // Domain alternatives project into DNS just as in legacy OR rules.
-            Enabled = rule.IsEnabled && MatchGroups(rule.Blocks).Any(g => g.Count == 1 && g[0].Selector == RoutingSelector.Domain),
+            Enabled = rule.IsEnabled && rule.Blocks.Filters.Any(f => f.Selector == RoutingSelector.Domain),
             Domain = Values(rule, RoutingSelector.Domain),
             OutboundTag = rule.OutboundTag,
             RuleType = rule.RuleType,
         };
+    }
+
+    internal static RoutingRuleBlocks FromLegacy(RulesItem rule)
+    {
+        var filters = new List<RoutingFilter>();
+        void Add(RoutingSelector selector, List<string>? values)
+        { if (values?.Count > 0) { filters.Add(new() { Selector = selector, Values = values }); } }
+        static List<string>? Split(string? value) => value?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
+        Add(RoutingSelector.Domain, rule.Domain);
+        Add(RoutingSelector.IP, rule.Ip);
+        Add(RoutingSelector.Port, Split(rule.Port));
+        Add(RoutingSelector.Process, rule.Process);
+        Add(RoutingSelector.Protocol, rule.Protocol);
+        Add(RoutingSelector.InboundTag, rule.InboundTag);
+        Add(RoutingSelector.Network, Split(rule.Network));
+        return new() { Filters = filters };
     }
 }

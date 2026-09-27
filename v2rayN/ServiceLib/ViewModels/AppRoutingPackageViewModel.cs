@@ -8,17 +8,14 @@ public partial class AppRoutingPackageRow : ReactiveObject
     public string Family { get; }
     public string Name { get; }
     public string Details { get; }
-    public bool CanSelect { get; }
     [Reactive] public partial bool Selected { get; set; }
 
-    internal AppRoutingPackageRow(RoutePackage package, bool selected, string? conflict, bool installed)
+    internal AppRoutingPackageRow(RoutePackage package, bool selected, bool installed)
     {
         Family = package.Family;
         Name = package.Name;
-        CanSelect = conflict == null;
         Details = string.Join(" · ", new[] { package.Family, package.Publisher,
-            installed ? "" : ResUI.AppRoutingPackageUnavailable,
-            conflict == null ? "" : string.Format(ResUI.AppRoutingPackageAssigned, conflict) }.Where(s => s.Length != 0));
+            installed ? "" : ResUI.AppRoutingPackageUnavailable }.Where(s => s.Length != 0));
         Selected = selected;
     }
 }
@@ -26,7 +23,6 @@ public partial class AppRoutingPackageRow : ReactiveObject
 /// <summary>A detached package selection: only the owning rule editor can commit it.</summary>
 public partial class AppRoutingPackageViewModel : ReactiveObject, IDisposable
 {
-    [Reactive] public partial string Name { get; set; } = "";
     [Reactive] public partial string Search { get; set; } = "";
     [Reactive] public partial string Status { get; set; } = "";
     [Reactive] public partial string SelectionSummary { get; set; } = "";
@@ -34,27 +30,21 @@ public partial class AppRoutingPackageViewModel : ReactiveObject, IDisposable
     [Reactive] public partial bool CanConfirm { get; set; }
     [Reactive] public partial IReadOnlyList<AppRoutingPackageRow> Packages { get; set; } = [];
     public string Account { get; }
-    public bool ShowName { get; }
     public ReactiveCommand<RxVoid, RxVoid> ImportCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> SelectVisibleCmd { get; }
     public ReactiveCommand<RxVoid, RxVoid> ClearVisibleCmd { get; }
     private readonly Func<IReadOnlyList<RoutePackage>> _read;
     private readonly Func<IReadOnlyList<RoutePackage>, RouteLoopbackSelection> _import;
     private readonly HashSet<string> _selected;
-    private readonly IReadOnlyDictionary<string, string> _assigned;
     private readonly List<IDisposable> _subscriptions = [];
     private IReadOnlyList<RoutePackage> _catalog = [];
     private IReadOnlyList<AppRoutingPackageRow> _rows = [];
     private bool _loaded, _disposed;
 
-    internal AppRoutingPackageViewModel(string name, IEnumerable<string> selected, IReadOnlyDictionary<string, string> assigned,
-        Func<IReadOnlyList<RoutePackage>>? read = null, Func<IReadOnlyList<RoutePackage>, RouteLoopbackSelection>? import = null,
-        bool showName = true)
+    internal AppRoutingPackageViewModel(IEnumerable<string> selected,
+        Func<IReadOnlyList<RoutePackage>>? read = null, Func<IReadOnlyList<RoutePackage>, RouteLoopbackSelection>? import = null)
     {
-        Name = name;
-        ShowName = showName;
         _selected = selected.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _assigned = assigned;
         _read = read ?? (() => OperatingSystem.IsWindows() ? RoutePackageCatalog.Read() : throw new PlatformNotSupportedException());
         _import = import ?? (packages => OperatingSystem.IsWindows() ? RouteLoopbackImport.Read(packages) : throw new PlatformNotSupportedException());
         if (OperatingSystem.IsWindows())
@@ -68,7 +58,7 @@ public partial class AppRoutingPackageViewModel : ReactiveObject, IDisposable
         SelectVisibleCmd = ReactiveCommand.Create(() => SetVisible(true), canEdit);
         ClearVisibleCmd = ReactiveCommand.Create(() => SetVisible(false), canEdit);
         _subscriptions.Add(this.WhenAnyValue(vm => vm.Search).Subscribe(_ => Filter()));
-        _subscriptions.Add(this.WhenAnyValue(vm => vm.Name, vm => vm.IsBusy).Subscribe(_ => UpdateSelection()));
+        _subscriptions.Add(this.WhenAnyValue(vm => vm.IsBusy).Subscribe(_ => UpdateSelection()));
     }
 
     public async Task Initialize()
@@ -81,7 +71,7 @@ public partial class AppRoutingPackageViewModel : ReactiveObject, IDisposable
             _catalog = catalog;
             var present = catalog.Select(p => p.Family).ToHashSet(StringComparer.OrdinalIgnoreCase);
             _rows = catalog.Concat(_selected.Where(f => !present.Contains(f)).Select(f => new RoutePackage(f, f, "")))
-                .Select(p => new AppRoutingPackageRow(p, _selected.Contains(p.Family), _assigned.GetValueOrDefault(p.Family), present.Contains(p.Family)))
+                .Select(p => new AppRoutingPackageRow(p, _selected.Contains(p.Family), present.Contains(p.Family)))
                 .OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
             foreach (var row in _rows)
             {
@@ -95,8 +85,6 @@ public partial class AppRoutingPackageViewModel : ReactiveObject, IDisposable
         finally { if (!_disposed) { IsBusy = false; } }
     }
 
-    public IReadOnlyList<string> SelectedFamilies() => _rows.Where(p => p.Selected).Select(p => p.Family).ToArray();
-
     internal IReadOnlyDictionary<string, string> SelectedPackageNames() => _rows.Where(p => p.Selected)
         .ToDictionary(p => p.Family, p => p.Name, StringComparer.OrdinalIgnoreCase);
 
@@ -105,14 +93,14 @@ public partial class AppRoutingPackageViewModel : ReactiveObject, IDisposable
 
     private void SetVisible(bool selected)
     {
-        foreach (var row in Packages.Where(p => p.CanSelect)) { row.Selected = selected; }
+        foreach (var row in Packages) { row.Selected = selected; }
     }
 
     private void UpdateSelection()
     {
         var count = _rows.Count(p => p.Selected);
         SelectionSummary = string.Format(ResUI.AppRoutingPackagesSelected, count);
-        CanConfirm = _loaded && !IsBusy && !string.IsNullOrWhiteSpace(Name) && count != 0 && !_rows.Any(p => p.Selected && !p.CanSelect);
+        CanConfirm = _loaded && !IsBusy && count != 0;
     }
 
     private async Task Import()
@@ -124,8 +112,8 @@ public partial class AppRoutingPackageViewModel : ReactiveObject, IDisposable
             if (_disposed) { return; }
             var families = imported.Families.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var matched = _rows.Where(p => families.Contains(p.Family)).ToArray();
-            foreach (var row in matched.Where(p => p.CanSelect)) { row.Selected = true; }
-            Status = string.Format(ResUI.AppRoutingPackageImportResult, matched.Count(p => p.CanSelect), imported.Unmatched, matched.Count(p => !p.CanSelect));
+            foreach (var row in matched) { row.Selected = true; }
+            Status = string.Format(ResUI.AppRoutingPackageImportResult, matched.Length, imported.Unmatched);
         }
         catch (Exception ex) { if (!_disposed) { Status = ResUI.OperationFailed + ": " + ex.Message; } }
         finally { if (!_disposed) { IsBusy = false; } }

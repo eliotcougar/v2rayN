@@ -5,71 +5,36 @@ namespace ServiceLib.Tests.AppRouting;
 public class PackageRuleTests
 {
     internal const string Family = "Example.NetworkApp_123456789abcd";
-    internal static AppRouteRule Group(params string[] families) => new()
-    {
-        MatchKind = AppRouteMatchKind.WindowsApp, Name = "Windows applications", PackageFamilies = [.. families], Kind = AppRouteKind.ActiveProfile
-    };
-
-    [Test]
-    public async Task PackageGroupsRoundTripAndOldRulesKeepProcessMatching()
-    {
-        var group = JsonUtils.DeepCopy(Group(Family, "Example.Other_123456789abcd"));
-
-        await group.PackageFamilies.Count.Should().BeEqualTo(2);
-        var matcher = new AppRouteMatcher([group]);
-        await matcher.Find(null, "Host.exe", Family.ToUpperInvariant()).Should().BeEqualTo(group);
-        await matcher.Find(null, "Host.exe", group.PackageFamilies[1]).Should().BeEqualTo(group);
-        await matcher.Find(null, "Host.exe", "Example.OtherPublisher_987654321abcd").Should().BeNull();
-        var old = JsonUtils.Deserialize<AppRouteRule>("{\"executablePath\":\"App.exe\",\"matchByName\":true,\"kind\":3}")!;
-        await old.MatchKind.Should().BeEqualTo(AppRouteMatchKind.Process);
-        await new AppRouteMatcher([old]).Find(null, "App.exe", Family).Should().BeEqualTo(old);
-    }
-
-    [Test]
-    public async Task ExplicitProcessRulesOverridePackagesRegardlessOfOrder()
-    {
-        var group = Group(Family);
-        var name = new AppRouteRule { ExecutablePath = "App.exe", MatchByName = true };
-        var path = new AppRouteRule { ExecutablePath = Path.Combine(Path.GetTempPath(), "App.exe") };
-        foreach (var rules in new[] { new[] { group, name, path }, new[] { path, name, group } })
-        {
-            var matcher = new AppRouteMatcher(rules);
-            await matcher.Find(path.ExecutablePath, "App.exe", Family).Should().BeEqualTo(path);
-            await matcher.Find(null, "App.exe", Family).Should().BeEqualTo(name);
-            await matcher.Find(null, "Helper.exe", Family).Should().BeEqualTo(group);
-        }
-    }
+    private static (RouteSharedPolicy Policy, RouteTarget Target) Group(string family, bool children = false) => RouteTestFactory.Package(family, children);
 
     [Test]
     public async Task BrokeredPackageProcessesMatchWithoutMatchingUnrelatedHosts()
     {
         var rule = Group(Family);
-        var tree = new RouteProcessTree(new([rule]), []);
+        var tree = new RouteProcessTree(rule.Policy, []);
         tree.Update([
             new(new(10, 1), 0, "RuntimeBroker.exe", null, PackageFamily: ""),
             new(new(20, 2), 10, "backgroundTaskHost.exe", null, PackageFamily: Family),
             new(new(30, 3), 10, "backgroundTaskHost.exe", null, PackageFamily: "Other_123456789abcd")]);
         await tree.Find(new(10, 1)).Should().BeNull();
-        await tree.Find(new(20, 2)).Should().BeEqualTo(rule);
+        await tree.Find(new(20, 2)).Should().BeEqualTo(rule.Target);
         await tree.Find(new(30, 3)).Should().BeNull();
     }
 
     [Test]
     public async Task PackageChildrenRespectGenerationAndCoreExclusions()
     {
-        var rule = Group(Family);
-        rule.IncludeChildProcesses = true;
-        var tree = new RouteProcessTree(new([rule]), []);
+        var rule = Group(Family, children: true);
+        var tree = new RouteProcessTree(rule.Policy, []);
         tree.Update([new(new(10, 1), 0, "App.exe", null, Exited: 3, PackageFamily: Family),
             new(new(20, 2), 10, "Helper.exe", null, PackageFamily: ""),
             new(new(10, 4), 0, "Unrelated.exe", null, PackageFamily: ""),
             new(new(30, 5), 10, "Helper.exe", null, PackageFamily: ""),
             new(new(40, 2), 0, "xray.exe", null, PackageFamily: Family)]);
-        await tree.Find(new(20, 2)).Should().BeEqualTo(rule);
+        await tree.Find(new(20, 2)).Should().BeEqualTo(rule.Target);
         await tree.Find(new(30, 5)).Should().BeNull();
         await tree.Find(new(40, 2)).Should().BeNull();
-        rule.IncludeChildProcesses = false;
-        tree.SetRules(new([rule]), []);
+        tree.SetRules(Group(Family).Policy, []);
         await tree.Find(new(20, 2)).Should().BeNull();
     }
 
@@ -77,17 +42,17 @@ public class PackageRuleTests
     public async Task UnknownIdentityWaitsAndLaterStopOrSnapshotDoesNotEraseKnownPackage()
     {
         var rule = Group(Family);
-        var tree = new RouteProcessTree(new([rule]), []);
+        var tree = new RouteProcessTree(rule.Policy, []);
         var process = new RouteProcessInfo(new(10, 1), 0, "App.exe", null);
         tree.Update([process]);
         await tree.Decide(process.Key).Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
         tree.Update([process with { PackageFamily = Family }]);
         tree.Update([process, process with { PackageFamily = "" }, new(process.Key, 0, "", null, Exited: 5)]);
-        await tree.Find(process.Key).Should().BeEqualTo(rule);
-        var explicitRule = new AppRouteRule { ExecutablePath = "Other.exe", MatchByName = true };
-        tree.SetRules(new([rule, explicitRule]), []);
+        await tree.Find(process.Key).Should().BeEqualTo(rule.Target);
+        var explicitRule = RouteTestFactory.Process("Other.exe");
+        tree.SetRules(explicitRule.Policy, []);
         tree.Update([new(new(20, 2), 0, "Other.exe", null)]);
-        await tree.Find(new(20, 2)).Should().BeEqualTo(explicitRule);
+        await tree.Find(new(20, 2)).Should().BeEqualTo(explicitRule.Target);
     }
 
     [Test]

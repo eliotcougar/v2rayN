@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1776,29 +1776,8 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="AppRoutingInterfacesHelp" xml:space="preserve">
     <value>Appliquer les règles de routage des applications uniquement aux interfaces cochées. Les nouvelles interfaces reprennent le réglage du commutateur lors de leur première détection ; les choix existants sont conservés. Redémarrez les applications concernées après modification.</value>
   </data>
-  <data name="AppRoutingMonitor" xml:space="preserve">
-    <value>Surveiller</value>
-  </data>
-  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
-    <value>Actuellement absente</value>
-  </data>
-  <data name="AppRoutingAddProcessRule" xml:space="preserve">
-    <value>Ajouter une règle de processus</value>
-  </data>
-  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
-    <value>Ajouter une règle d’application Windows</value>
-  </data>
   <data name="AppRoutingWindowsApps" xml:space="preserve">
     <value>Applications Windows</value>
-  </data>
-  <data name="AppRoutingRuleName" xml:space="preserve">
-    <value>Nom de la règle</value>
-  </data>
-  <data name="AppRoutingRuleColumn" xml:space="preserve">
-    <value>Application / règle</value>
-  </data>
-  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
-    <value>Modifier les applications Windows</value>
   </data>
   <data name="AppRoutingPackageSearch" xml:space="preserve">
     <value>Rechercher des packages</value>
@@ -1818,20 +1797,11 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="AppRoutingPackageUnavailable" xml:space="preserve">
     <value>Non installé pour ce compte</value>
   </data>
-  <data name="AppRoutingPackageAssigned" xml:space="preserve">
-    <value>Déjà affecté à « {0} »</value>
-  </data>
-  <data name="AppRoutingPackageRequired" xml:space="preserve">
-    <value>Saisissez un nom de règle et sélectionnez au moins un package.</value>
-  </data>
-  <data name="AppRoutingPackageConflict" xml:space="preserve">
-    <value>Chaque package ne peut appartenir qu’à une seule règle d’application Windows activée.</value>
-  </data>
   <data name="AppRoutingPackageImport" xml:space="preserve">
     <value>Importer les exemptions de bouclage</value>
   </data>
   <data name="AppRoutingPackageImportResult" xml:space="preserve">
-    <value>Sélectionnés : {0}. Exemptions sans correspondance : {1}. Déjà affectés : {2}. Les autorisations Windows n’ont pas été modifiées.</value>
+    <value>Sélectionnés : {0}. Exemptions sans correspondance : {1}. Les autorisations Windows n’ont pas été modifiées.</value>
   </data>
   <data name="AppRoutingSelectVisible" xml:space="preserve">
     <value>Sélectionner les éléments visibles</value>

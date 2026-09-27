@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1908,29 +1908,8 @@
   <data name="AppRoutingInterfacesHelp" xml:space="preserve">
     <value>Применять правила маршрутизации приложений только на отмеченных интерфейсах. Новые интерфейсы получают состояние переключателя при первом обнаружении; существующие настройки сохраняются. После изменения выбора перезапустите маршрутизируемые приложения.</value>
   </data>
-  <data name="AppRoutingMonitor" xml:space="preserve">
-    <value>Отслеживать</value>
-  </data>
-  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
-    <value>Сейчас отсутствует</value>
-  </data>
-  <data name="AppRoutingAddProcessRule" xml:space="preserve">
-    <value>Добавить правило процесса</value>
-  </data>
-  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
-    <value>Добавить правило приложения Windows</value>
-  </data>
   <data name="AppRoutingWindowsApps" xml:space="preserve">
     <value>Приложения Windows</value>
-  </data>
-  <data name="AppRoutingRuleName" xml:space="preserve">
-    <value>Название правила</value>
-  </data>
-  <data name="AppRoutingRuleColumn" xml:space="preserve">
-    <value>Приложение / правило</value>
-  </data>
-  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
-    <value>Изменить приложения Windows</value>
   </data>
   <data name="AppRoutingPackageSearch" xml:space="preserve">
     <value>Поиск пакетов</value>
@@ -1950,20 +1929,11 @@
   <data name="AppRoutingPackageUnavailable" xml:space="preserve">
     <value>Не установлен для этого пользователя</value>
   </data>
-  <data name="AppRoutingPackageAssigned" xml:space="preserve">
-    <value>Уже назначен правилу «{0}»</value>
-  </data>
-  <data name="AppRoutingPackageRequired" xml:space="preserve">
-    <value>Введите название правила и выберите хотя бы один пакет.</value>
-  </data>
-  <data name="AppRoutingPackageConflict" xml:space="preserve">
-    <value>Каждый пакет может входить только в одно включённое правило приложений Windows.</value>
-  </data>
   <data name="AppRoutingPackageImport" xml:space="preserve">
     <value>Импортировать исключения loopback</value>
   </data>
   <data name="AppRoutingPackageImportResult" xml:space="preserve">
-    <value>Выбрано: {0}. Исключений без соответствующего пакета: {1}. Уже назначено другим правилам: {2}. Разрешения Windows не изменены.</value>
+    <value>Выбрано: {0}. Исключений без соответствующего пакета: {1}. Разрешения Windows не изменены.</value>
   </data>
   <data name="AppRoutingSelectVisible" xml:space="preserve">
     <value>Выбрать видимые</value>

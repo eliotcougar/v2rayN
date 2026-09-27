@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1803,29 +1803,8 @@ Tindakan "Ambil sertifikat" mungkin gagal jika sertifikat self-signed digunakan 
   <data name="AppRoutingInterfacesHelp" xml:space="preserve">
     <value>Terapkan aturan perutean aplikasi hanya pada antarmuka yang dicentang. Antarmuka baru mengikuti pengaturan sakelar saat pertama kali ditemukan; pilihan yang ada tetap disimpan. Mulai ulang aplikasi yang dirutekan setelah mengubah pilihan.</value>
   </data>
-  <data name="AppRoutingMonitor" xml:space="preserve">
-    <value>Pantau</value>
-  </data>
-  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
-    <value>Saat ini tidak tersedia</value>
-  </data>
-  <data name="AppRoutingAddProcessRule" xml:space="preserve">
-    <value>Tambah aturan proses</value>
-  </data>
-  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
-    <value>Tambah aturan aplikasi Windows</value>
-  </data>
   <data name="AppRoutingWindowsApps" xml:space="preserve">
     <value>Aplikasi Windows</value>
-  </data>
-  <data name="AppRoutingRuleName" xml:space="preserve">
-    <value>Nama aturan</value>
-  </data>
-  <data name="AppRoutingRuleColumn" xml:space="preserve">
-    <value>Aplikasi / aturan</value>
-  </data>
-  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
-    <value>Edit aplikasi Windows</value>
   </data>
   <data name="AppRoutingPackageSearch" xml:space="preserve">
     <value>Cari paket</value>
@@ -1845,20 +1824,11 @@ Tindakan "Ambil sertifikat" mungkin gagal jika sertifikat self-signed digunakan 
   <data name="AppRoutingPackageUnavailable" xml:space="preserve">
     <value>Tidak terinstal untuk akun ini</value>
   </data>
-  <data name="AppRoutingPackageAssigned" xml:space="preserve">
-    <value>Sudah ditetapkan ke “{0}”</value>
-  </data>
-  <data name="AppRoutingPackageRequired" xml:space="preserve">
-    <value>Masukkan nama aturan dan pilih setidaknya satu paket.</value>
-  </data>
-  <data name="AppRoutingPackageConflict" xml:space="preserve">
-    <value>Setiap paket hanya dapat menjadi bagian dari satu aturan aplikasi Windows yang aktif.</value>
-  </data>
   <data name="AppRoutingPackageImport" xml:space="preserve">
     <value>Impor aturan pengecualian loopback</value>
   </data>
   <data name="AppRoutingPackageImportResult" xml:space="preserve">
-    <value>Dipilih: {0}. Pengecualian tanpa kecocokan: {1}. Sudah ditetapkan: {2}. Izin Windows tidak diubah.</value>
+    <value>Dipilih: {0}. Pengecualian tanpa kecocokan: {1}. Izin Windows tidak diubah.</value>
   </data>
   <data name="AppRoutingSelectVisible" xml:space="preserve">
     <value>Pilih yang terlihat</value>

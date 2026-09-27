@@ -5,56 +5,6 @@ namespace ServiceLib.Tests.AppRouting;
 public class SocksTests
 {
     [Test]
-    [Arguments(1, false)]
-    [Arguments(1, true)]
-    [Arguments(3, false)]
-    [Arguments(3, true)]
-    public async Task ActiveProfileUsesCurrentMainListenerForTcpAndUdpWithoutStaleSocksCredentials(int command, bool ipv6)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var first = new TcpListener(IPAddress.Loopback, 0);
-        first.Start();
-        var second = new TcpListener(IPAddress.Loopback, 0);
-        second.Start();
-        try
-        {
-            var rule = new AppRouteRule
-            {
-                Kind = AppRouteKind.ActiveProfile,
-                ExecutablePath = "App.exe",
-                MatchByName = true,
-                ProxyEndpoint = new(1, "old-user", "old-password")
-            };
-
-            var destination = new IPEndPoint(PacketTests.Flow(ipv6).RemoteAddress, 443);
-            foreach (var listener in new[] { first, second })
-            {
-                var server = Task.Run(async () =>
-                {
-                    using var client = await listener.AcceptTcpClientAsync(timeout.Token);
-                    using var stream = client.GetStream();
-                    var greeting = new byte[3];
-                    await stream.ReadExactlyAsync(greeting, timeout.Token);
-                    await greeting.SequenceEqual(new byte[] { 5, 1, 0 }).Should().BeTrue();
-                    await stream.WriteAsync(new byte[] { 5, 0 }, timeout.Token);
-                    var expected = new byte[] { 5, (byte)command, 0 }.Concat(RouteConnector.EncodeAddress(destination)).ToArray();
-                    var request = new byte[expected.Length];
-                    await stream.ReadExactlyAsync(request, timeout.Token);
-                    await request.SequenceEqual(expected).Should().BeTrue();
-                    await stream.WriteAsync(new byte[] { 5, 0, 0 }.Concat(RouteConnector.EncodeAddress(destination)).ToArray(), timeout.Token);
-                });
-                using var socket = await RouteConnector.ConnectProxy(rule, timeout.Token, ((IPEndPoint)listener.LocalEndpoint).Port);
-                var reply = await RouteConnector.Request(socket, (byte)command, destination, timeout.Token);
-                await reply.Should().BeEqualTo(destination);
-                await server;
-            }
-            await rule.Kind.Should().BeEqualTo(AppRouteKind.ActiveProfile);
-            await rule.ProxyEndpoint!.Port.Should().BeEqualTo(1);
-        }
-        finally { first.Stop(); second.Stop(); }
-    }
-
-    [Test]
     public async Task Ipv4MappedAddressesUseIpv4EncodingInRequestsAndDatagrams()
     {
         var endpoint = new IPEndPoint(IPAddress.Parse("::ffff:198.51.100.2"), 443);
@@ -131,11 +81,7 @@ public class SocksTests
 
                 await stream.WriteAsync(new byte[] { 42 }, timeout.Token);
             });
-            var rule = new AppRouteRule
-            {
-                Kind = AppRouteKind.Profile,
-                ProxyEndpoint = new(((IPEndPoint)listener.LocalEndpoint).Port, authentication ? "u" : "", authentication ? "p" : "")
-            };
+            var rule = RouteTestFactory.Target(((IPEndPoint)listener.LocalEndpoint).Port, authentication ? "u" : "", authentication ? "p" : "");
             using var socket = await RouteConnector.ConnectTcp(rule, destination, timeout.Token);
             var received = new byte[1];
             using var stream = new NetworkStream(socket, false);
@@ -165,11 +111,7 @@ public class SocksTests
             var rejected = false;
             try
             {
-                using var socket = await RouteConnector.ConnectTcp(new AppRouteRule
-                {
-                    Kind = AppRouteKind.Profile,
-                    ProxyEndpoint = new(((IPEndPoint)listener.LocalEndpoint).Port)
-                }, new(IPAddress.Loopback, 9), timeout.Token);
+                using var socket = await RouteConnector.ConnectTcp(RouteTestFactory.Target(((IPEndPoint)listener.LocalEndpoint).Port), new(IPAddress.Loopback, 9), timeout.Token);
             }
             catch (IOException) { rejected = true; }
             await rejected.Should().BeTrue();

@@ -6,7 +6,7 @@ internal sealed record RouteSocksEndpoint(int Port, string Username = "", string
 
 internal static class RouteConnector
 {
-    public static async Task<Socket> ConnectTcp(AppRouteRule rule, IPEndPoint destination, CancellationToken token)
+    public static async Task<Socket> ConnectTcp(RouteTarget rule, IPEndPoint destination, CancellationToken token)
     {
         var proxy = await ConnectProxy(rule, token);
         try
@@ -17,16 +17,8 @@ internal static class RouteConnector
         catch { proxy.Dispose(); throw; }
     }
 
-    public static Task<Socket> ConnectProxy(AppRouteRule rule, CancellationToken token) =>
-        ConnectProxy(rule, token, rule.Kind == AppRouteKind.ActiveProfile ? AppManager.Instance.GetLocalPort(EInboundProtocol.socks) : 0);
-
-    internal static async Task<Socket> ConnectProxy(AppRouteRule rule, CancellationToken token, int mainSocksPort)
-    {
-        var endpoint = rule.ResolveEndpoint != null ? await rule.ResolveEndpoint(token)
-            : rule.Kind == AppRouteKind.ActiveProfile ? new RouteSocksEndpoint(mainSocksPort)
-            : rule.ProxyEndpoint ?? throw new InvalidOperationException("The routing profile has not been prepared.");
-        return await ConnectProxy(endpoint, token);
-    }
+    public static async Task<Socket> ConnectProxy(RouteTarget rule, CancellationToken token) =>
+        await ConnectProxy(await rule.ResolveEndpoint(token), token);
 
     internal static async Task<Socket> ConnectProxy(RouteSocksEndpoint endpoint, CancellationToken token)
     {
@@ -35,7 +27,6 @@ internal static class RouteConnector
         {
             await socket.ConnectAsync(Global.Loopback, endpoint.Port, token);
             using var stream = new NetworkStream(socket, false);
-            // Credentials on the separate LAN listener do not apply to the main local listener.
             var authentication = !string.IsNullOrEmpty(endpoint.Username);
             await stream.WriteAsync(new byte[] { 5, 1, authentication ? (byte)2 : (byte)0 }, token);
             var reply = new byte[2];

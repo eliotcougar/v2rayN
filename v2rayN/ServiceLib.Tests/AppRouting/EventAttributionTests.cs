@@ -5,7 +5,7 @@ namespace ServiceLib.Tests.AppRouting;
 
 public class EventAttributionTests
 {
-    private static AppRouteRule Rule(string name) => new() { ExecutablePath = name, MatchByName = true, IncludeChildProcesses = true };
+    private static (RouteSharedPolicy Policy, RouteTarget Target) Rule(string name) => RouteTestFactory.Process(name);
     private static RouteProcessInfo Process(int pid, long born, int parent, string name, long at) => new(new(pid, born), parent, name, null, StartedAt: at);
     private static RouteSocketEvent Socket(byte kind, long at, ulong endpoint = 1, int pid = 20, byte protocol = 17) =>
         new(kind, at, endpoint, pid, PacketTests.Flow(false) with { Protocol = protocol });
@@ -14,20 +14,20 @@ public class EventAttributionTests
     public async Task DelayedShortLivedLauncherJoinsItsSurvivingWorker()
     {
         var rule = Rule("App.exe");
-        var tree = new RouteProcessTree(new([rule]), []);
+        var tree = new RouteProcessTree(rule.Policy, []);
         tree.Update([Process(10, 100, 0, "App.exe", 1000), Process(30, 112, 20, "Worker.exe", 1200)]);
         await tree.Decide(new(30, 112), 100).Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
         // Stop may be delivered before start; the later start fills identity without undoing the exit.
         tree.Update([new(new(20, 110), 0, "", null, Exited: 115, ExitedAt: 1250)]);
         tree.Update([Process(20, 110, 10, "Launcher.exe", 1100)]);
-        await tree.Decide(new(30, 112), 100).Rule.Should().BeEqualTo(rule);
+        await tree.Decide(new(30, 112), 100).Rule.Should().BeEqualTo(rule.Target);
         await tree.Processes.Single(p => p.Key == new RouteProcessKey(20, 110)).Exited.Should().BeEqualTo(115L);
     }
 
     [Test]
     public async Task LateSnapshotCannotResurrectExitedProcessOrDiscardParentSequence()
     {
-        var tree = new RouteProcessTree(new([Rule("App.exe")]), []);
+        var tree = new RouteProcessTree(Rule("App.exe").Policy, []);
         var start = Process(20, 110, 10, "Worker.exe", 1100) with { Sequence = 2, ParentSequence = 1 };
         tree.Update([start, start with { Exited = 120, ExitedAt = 1200 }]);
         tree.Update([start with { StartedAt = 0, Sequence = 0, ParentSequence = 0 }]);
@@ -42,9 +42,9 @@ public class EventAttributionTests
     public async Task ParentSequenceRejectsDifferentGenerationButAllowsSeededParent()
     {
         var rule = Rule("App.exe");
-        var tree = new RouteProcessTree(new([rule]), []);
+        var tree = new RouteProcessTree(rule.Policy, []);
         tree.Update([Process(10, 90, 0, "App.exe", 0), Process(20, 110, 10, "Worker.exe", 1100) with { ParentSequence = 2 }]);
-        await tree.Decide(new(20, 110), 100).Rule.Should().BeEqualTo(rule);
+        await tree.Decide(new(20, 110), 100).Rule.Should().BeEqualTo(rule.Target);
         tree.Update([Process(10, 90, 0, "App.exe", 900) with { Sequence = 1 }]);
         await tree.Decide(new(20, 110), 100).Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
     }
@@ -53,11 +53,11 @@ public class EventAttributionTests
     public async Task SocketTimestampSelectsExitedGenerationWithoutFollowingReusedPid()
     {
         var selected = Rule("App.exe");
-        var tree = new RouteProcessTree(new([selected]), []);
+        var tree = new RouteProcessTree(selected.Policy, []);
         tree.Update([Process(20, 110, 0, "App.exe", 1000) with { Exited = 120, ExitedAt = 2000 },
             Process(20, 130, 0, "Other.exe", 3000)]);
         var index = new RouteProcessDecisions(tree, 100);
-        await index.At(20, 1500).Rule.Should().BeEqualTo(selected);
+        await index.At(20, 1500).Rule.Should().BeEqualTo(selected.Target);
         await index.At(20, 2500).Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
         await index.At(20, 3500).Kind.Should().BeEqualTo(RouteDecisionKind.Unselected);
         await index.Current(20).Kind.Should().BeEqualTo(RouteDecisionKind.Unselected);
@@ -66,7 +66,7 @@ public class EventAttributionTests
     [Test]
     public async Task UnreceivedStartCannotBorrowOlderPidIdentity()
     {
-        var tree = new RouteProcessTree(new([Rule("App.exe")]), []);
+        var tree = new RouteProcessTree(Rule("App.exe").Policy, []);
         tree.Update([Process(20, 90, 0, "App.exe", 0), Process(20, 110, 0, "Other.exe", 0)]);
         var index = new RouteProcessDecisions(tree, 100);
         await index.At(20, 1500).Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
@@ -78,7 +78,7 @@ public class EventAttributionTests
     {
         var history = new RouteSocketHistory();
         history.Update([Socket(3, 100), Socket(7, 200), Socket(3, 300, 2, 30)], 400);
-        var first = new RouteDecision(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe"));
+        var first = new RouteDecision(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe").Target);
         var index = history.Snapshot((pid, _) => pid == 20 ? first : new(RouteDecisionKind.Unselected, new(30, 2)));
         var flow = Socket(3, 100).Flow;
         await index.Find(flow, 150)!.Process.Should().BeEqualTo(first.Process);
@@ -93,7 +93,7 @@ public class EventAttributionTests
         var history = new RouteSocketHistory();
         history.Update([Socket(7, 200)], 300);
         history.Update([Socket(3, 100)], 300);
-        var index = history.Snapshot((_, _) => new(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe")));
+        var index = history.Snapshot((_, _) => new(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe").Target));
         await index.Find(Socket(3, 100).Flow, 150)!.Kind.Should().BeEqualTo(RouteDecisionKind.Selected);
         await index.Find(Socket(3, 100).Flow, 0)!.Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
     }
@@ -101,7 +101,7 @@ public class EventAttributionTests
     [Test]
     public async Task SharedEndpointAndSharedTableRemainAmbiguous()
     {
-        var selected = new RouteDecision(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe"));
+        var selected = new RouteDecision(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe").Target);
         var history = new RouteSocketHistory();
         history.Update([Socket(3, 100), Socket(3, 100, 2, 30)], 200);
         var sockets = history.Snapshot((pid, _) => pid == 20 ? selected : new(RouteDecisionKind.Unselected, new(30, 1)));
@@ -119,7 +119,7 @@ public class EventAttributionTests
     {
         var history = new RouteSocketHistory();
         history.Update([Socket(3, 100), Socket(7, 200)], 300);
-        var decision = new RouteDecision(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe"));
+        var decision = new RouteDecision(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe").Target);
         var flow = Socket(3, 100).Flow;
         var snapshot = new RouteAttributionSnapshot([], [new(flow.LocalAddress, flow.LocalPort, null, 0, 30)],
             _ => new(RouteDecisionKind.Unselected, new(30, 1)), 300, history.Snapshot((_, _) => decision));
@@ -205,7 +205,7 @@ public class EventAttributionTests
         var history = new RouteSocketHistory();
         history.Update([Socket(3, 100), Socket(7, 200), Socket(3, 300, pid: 30)], 400);
         history.Update([Socket(7, 200)], 400);
-        var index = history.Snapshot((pid, _) => new(RouteDecisionKind.Selected, new(pid, pid), Rule("App.exe")));
+        var index = history.Snapshot((pid, _) => new(RouteDecisionKind.Selected, new(pid, pid), Rule("App.exe").Target));
         await index.Find(Socket(3, 100).Flow, 150)!.Process.Should().BeEqualTo(new RouteProcessKey(20, 20));
         await index.Find(Socket(3, 100).Flow, 350)!.Process.Should().BeEqualTo(new RouteProcessKey(30, 30));
     }
@@ -218,7 +218,7 @@ public class EventAttributionTests
         var flow = PacketTests.Flow(ipv6) with { Protocol = 6 };
         var history = new RouteSocketHistory();
         history.Update([new(4, 100, 1, 20, flow)], 200);
-        var sockets = history.Snapshot((_, _) => new(RouteDecisionKind.Selected, new(20, 10), Rule("App.exe")));
+        var sockets = history.Snapshot((_, _) => new(RouteDecisionKind.Selected, new(20, 10), Rule("App.exe").Target));
         await sockets.Find(flow, 150)!.Kind.Should().BeEqualTo(RouteDecisionKind.Selected);
         await sockets.Find(flow with { RemotePort = 8443 }, 150).Should().BeNull();
         await sockets.Find(flow, 50)!.Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
@@ -285,7 +285,7 @@ public class EventAttributionTests
         var history = new RouteSocketHistory();
         history.Update([Socket(3, 100)], 400, (_, _) => 300);
         history.Update([], 400, (_, _) => 200);
-        var sockets = history.Snapshot((_, _) => new(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe")));
+        var sockets = history.Snapshot((_, _) => new(RouteDecisionKind.Selected, new(20, 1), Rule("App.exe").Target));
         await sockets.Find(Socket(3, 100).Flow, 150)!.Kind.Should().BeEqualTo(RouteDecisionKind.Selected);
         await sockets.Find(Socket(3, 100).Flow, 250)!.Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
     }
@@ -296,7 +296,7 @@ public class EventAttributionTests
         var now = 12 * System.Diagnostics.Stopwatch.Frequency;
         var history = new RouteSocketHistory();
         history.Update([Socket(3, 100), Socket(7, 200), Socket(3, now, pid: 30)], now);
-        var sockets = history.Snapshot((pid, _) => new(RouteDecisionKind.Selected, new(pid, 1), Rule("App.exe")));
+        var sockets = history.Snapshot((pid, _) => new(RouteDecisionKind.Selected, new(pid, 1), Rule("App.exe").Target));
         await sockets.Find(Socket(3, 100).Flow, 150)!.Kind.Should().BeEqualTo(RouteDecisionKind.Unresolved);
         await sockets.Find(Socket(3, 100).Flow, now)!.Process.Should().BeEqualTo(new RouteProcessKey(30, 1));
     }
@@ -313,15 +313,4 @@ public class EventAttributionTests
         await RouteProcessPath.Normalize("App.exe").Should().BeNull();
     }
 
-    [Test]
-    public async Task PreparedRuleSignatureRetainsOnlyTheSameDestination()
-    {
-        var rule = Rule("App.exe");
-        var signature = JsonUtils.Serialize(rule);
-        var policy = new RoutePolicy([rule], []);
-        await policy.Retains(rule.Id, signature).Should().BeTrue();
-        rule.ProxyEndpoint = new(12345);
-        await new RoutePolicy([rule], []).Retains(rule.Id, signature).Should().BeFalse();
-        await new RoutePolicy([], []).Retains(rule.Id, signature).Should().BeFalse();
-    }
 }

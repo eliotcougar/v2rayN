@@ -5,7 +5,7 @@ internal sealed record RouteProcessInfo(RouteProcessKey Key, int ParentPid, stri
     ulong Sequence = 0, ulong ParentSequence = 0, long StartedAt = 0, long? ExitedAt = null, string? PackageFamily = null);
 
 /// <summary>Process identities include creation time; an inherited route never follows a recycled PID.</summary>
-internal sealed class RouteProcessTree(AppRouteMatcher rules, IEnumerable<int> excludedProcesses)
+internal sealed class RouteProcessTree(RouteSharedPolicy? rules, IEnumerable<int> excludedProcesses)
 {
     private readonly HashSet<int> _excluded = excludedProcesses.ToHashSet();
     private readonly Dictionary<RouteProcessKey, Node> _nodes = [];
@@ -19,7 +19,7 @@ internal sealed class RouteProcessTree(AppRouteMatcher rules, IEnumerable<int> e
     public bool Contains(RouteProcessKey key) => _nodes.ContainsKey(key);
     public IEnumerable<RouteProcessInfo> Processes => _nodes.Values.Select(n => n.Info);
 
-    public void SetRules(AppRouteMatcher updated, IEnumerable<int> excluded)
+    public void SetRules(RouteSharedPolicy? updated, IEnumerable<int> excluded)
     {
         rules = updated;
         _excluded.Clear();
@@ -100,7 +100,7 @@ internal sealed class RouteProcessTree(AppRouteMatcher rules, IEnumerable<int> e
         if (_nodes.Count > 65536) { throw new IOException("Application-routing process history exceeded its capacity."); }
     }
 
-    public AppRouteRule? Find(RouteProcessKey key) => Decide(key).Rule;
+    public RouteTarget? Find(RouteProcessKey key) => Decide(key).Rule;
 
     public RouteDecision Decide(RouteProcessKey key, long observedSince = 0)
     {
@@ -111,7 +111,6 @@ internal sealed class RouteProcessTree(AppRouteMatcher rules, IEnumerable<int> e
 
         var lineage = new List<RouteProcessInfo>();
         var seen = new HashSet<RouteProcessKey>();
-        AppRouteRule? match = null;
         var incomplete = false;
         for (var ancestor = node; ancestor != null; ancestor = ancestor.Parent)
         {
@@ -125,7 +124,7 @@ internal sealed class RouteProcessTree(AppRouteMatcher rules, IEnumerable<int> e
                 return RouteDecision.Unselected;
             }
 
-            incomplete |= ancestor.Info.Name.Length == 0 || ancestor.Info.Path == null && rules.NeedsPath(ancestor.Info.Name);
+            incomplete |= ancestor.Info.Name.Length == 0 || ancestor.Info.Path == null && rules?.NeedsPath(ancestor.Info.Name, ancestor != node) == true;
             if (observedSince != 0 && ancestor.Info.Key.Started >= observedSince)
             {
                 incomplete |= ancestor.Info.StartedAt == 0 || ancestor.Parent == null && ancestor.Info.ParentPid > 4;
@@ -133,19 +132,10 @@ internal sealed class RouteProcessTree(AppRouteMatcher rules, IEnumerable<int> e
 
             lineage.Add(ancestor.Info);
             incomplete |= ancestor.Info.PackageFamily == null &&
-                (ancestor == node ? rules.Shared?.HasPackages == true : rules.Shared?.PackagesIncludeChildren == true);
-            var rule = rules.Find(ancestor.Info.Path, ancestor.Info.Name, ancestor.Info.PackageFamily);
-            // Unknown package identity matters only while a package rule could change
-            // the winner. An explicit process rule already takes precedence.
-            incomplete |= match == null && rule == null && ancestor.Info.PackageFamily == null &&
-                (ancestor == node ? rules.HasPackages : rules.PackagesIncludeChildren);
-            if (match == null && rule != null && (ancestor == node || rule.IncludeChildProcesses))
-            {
-                match = rule;
-            }
+                (ancestor == node ? rules?.HasPackages == true : rules?.PackagesIncludeChildren == true);
         }
         if (incomplete) { return RouteDecision.Unresolved; }
-        match = rules.Shared?.Select(lineage, match) ?? match;
+        var match = rules?.Select(lineage);
         return new(match == null ? RouteDecisionKind.Unselected : RouteDecisionKind.Selected, key, match);
     }
 }

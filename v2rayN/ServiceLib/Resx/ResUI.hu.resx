@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1779,29 +1779,8 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="AppRoutingInterfacesHelp" xml:space="preserve">
     <value>Az alkalmazásútválasztási szabályok csak a bejelölt interfészekre érvényesek. Az új interfészek első észleléskor átveszik a kapcsoló beállítását; a meglévő választások megmaradnak. Módosítás után indítsa újra az érintett alkalmazásokat.</value>
   </data>
-  <data name="AppRoutingMonitor" xml:space="preserve">
-    <value>Figyelés</value>
-  </data>
-  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
-    <value>Jelenleg nem található</value>
-  </data>
-  <data name="AppRoutingAddProcessRule" xml:space="preserve">
-    <value>Folyamatszabály hozzáadása</value>
-  </data>
-  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
-    <value>Windows-alkalmazásszabály hozzáadása</value>
-  </data>
   <data name="AppRoutingWindowsApps" xml:space="preserve">
     <value>Windows-alkalmazások</value>
-  </data>
-  <data name="AppRoutingRuleName" xml:space="preserve">
-    <value>Szabály neve</value>
-  </data>
-  <data name="AppRoutingRuleColumn" xml:space="preserve">
-    <value>Alkalmazás / szabály</value>
-  </data>
-  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
-    <value>Windows-alkalmazások szerkesztése</value>
   </data>
   <data name="AppRoutingPackageSearch" xml:space="preserve">
     <value>Csomagok keresése</value>
@@ -1821,20 +1800,11 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="AppRoutingPackageUnavailable" xml:space="preserve">
     <value>Nincs telepítve ehhez a fiókhoz</value>
   </data>
-  <data name="AppRoutingPackageAssigned" xml:space="preserve">
-    <value>Már hozzá van rendelve: „{0}”</value>
-  </data>
-  <data name="AppRoutingPackageRequired" xml:space="preserve">
-    <value>Adjon nevet a szabálynak, és válasszon legalább egy csomagot.</value>
-  </data>
-  <data name="AppRoutingPackageConflict" xml:space="preserve">
-    <value>Egy csomag csak egy engedélyezett Windows-alkalmazásszabályhoz tartozhat.</value>
-  </data>
   <data name="AppRoutingPackageImport" xml:space="preserve">
     <value>Visszacsatolási kivételek importálása</value>
   </data>
   <data name="AppRoutingPackageImportResult" xml:space="preserve">
-    <value>Kijelölve: {0}. Nem megfeleltethető kivételek: {1}. Már hozzárendelve: {2}. A Windows engedélyei nem változtak.</value>
+    <value>Kijelölve: {0}. Nem megfeleltethető kivételek: {1}. A Windows engedélyei nem változtak.</value>
   </data>
   <data name="AppRoutingSelectVisible" xml:space="preserve">
     <value>Láthatók kijelölése</value>

@@ -1,16 +1,10 @@
-﻿using ServiceLib.Services.AppRouting;
+using ServiceLib.Services.AppRouting;
 
 namespace ServiceLib.Tests.AppRouting;
 
 public class ProcessTreeTests
 {
-    private static AppRouteRule Rule(string name, bool children = true) => new()
-    {
-        ExecutablePath = name,
-        MatchByName = true,
-        IncludeChildProcesses = children,
-        Kind = AppRouteKind.ActiveProfile
-    };
+    private static (RouteSharedPolicy Policy, RouteTarget Target) Rule(string name, bool children = true) => RouteTestFactory.Process(name, children);
     private static RouteProcessInfo Process(int pid, long started, int parent, string name, long? exited = null) =>
         new(new(pid, started), parent, name, null, exited);
 
@@ -20,38 +14,24 @@ public class ProcessTreeTests
         foreach (var children in new[] { false, true })
         {
             var rule = Rule("Parent.exe", children);
-            var tree = new RouteProcessTree(new([rule]), []);
+            var tree = new RouteProcessTree(rule.Policy, []);
             tree.Update([Process(10, 1, 0, "Parent.exe"), Process(20, 2, 10, "Child.exe"), Process(30, 3, 20, "Grandchild.exe")]);
-            await tree.Find(new(10, 1)).Should().BeEqualTo(rule);
-            await tree.Find(new(20, 2)).Should().BeEqualTo(children ? rule : null);
-            await tree.Find(new(30, 3)).Should().BeEqualTo(children ? rule : null);
+            await tree.Find(new(10, 1)).Should().BeEqualTo(rule.Target);
+            await tree.Find(new(20, 2)).Should().BeEqualTo(children ? rule.Target : null);
+            await tree.Find(new(30, 3)).Should().BeEqualTo(children ? rule.Target : null);
         }
-    }
-
-    [Test]
-    public async Task ExplicitChildRuleAndNearestEnabledAncestorTakePriority()
-    {
-        var root = Rule("Parent.exe");
-        var child = Rule("Child.exe");
-        var leaf = Rule("Leaf.exe", false);
-        var tree = new RouteProcessTree(new([root, child, leaf]), []);
-        tree.Update([Process(10, 1, 0, "Parent.exe"), Process(20, 2, 10, "Child.exe"),
-            Process(30, 3, 20, "Leaf.exe"), Process(40, 4, 30, "Worker.exe")]);
-        await tree.Find(new(20, 2)).Should().BeEqualTo(child);
-        await tree.Find(new(30, 3)).Should().BeEqualTo(leaf);
-        await tree.Find(new(40, 4)).Should().BeEqualTo(child);
     }
 
     [Test]
     public async Task ParentExitAndPidReuseDoNotLoseOrTransferExistingInheritance()
     {
         var rule = Rule("Parent.exe");
-        var tree = new RouteProcessTree(new([rule]), []);
+        var tree = new RouteProcessTree(rule.Policy, []);
         tree.Update([Process(10, 1, 0, "Parent.exe"), Process(20, 2, 10, "Child.exe")]);
         tree.Update([Process(10, 1, 0, "Parent.exe", 3), Process(10, 4, 0, "Unrelated.exe"),
             Process(30, 5, 10, "Other child.exe"), Process(40, 6, 20, "Grandchild.exe")]);
-        await tree.Find(new(20, 2)).Should().BeEqualTo(rule);
-        await tree.Find(new(40, 6)).Should().BeEqualTo(rule);
+        await tree.Find(new(20, 2)).Should().BeEqualTo(rule.Target);
+        await tree.Find(new(40, 6)).Should().BeEqualTo(rule.Target);
         await (tree.Find(new(30, 5)) == null).Should().BeTrue();
         await (tree.Find(new(10, 4)) == null).Should().BeTrue();
     }
@@ -60,17 +40,17 @@ public class ProcessTreeTests
     public async Task ChildFirstObservedAfterParentExitUsesVerifiedLifetime()
     {
         var rule = Rule("Parent.exe");
-        var tree = new RouteProcessTree(new([rule]), []);
+        var tree = new RouteProcessTree(rule.Policy, []);
         tree.Update([Process(10, 1, 0, "Parent.exe")]);
         tree.Update([Process(10, 1, 0, "Parent.exe", 3), Process(20, 2, 10, "Child.exe"), Process(30, 4, 10, "Unrelated.exe")]);
-        await tree.Find(new(20, 2)).Should().BeEqualTo(rule);
+        await tree.Find(new(20, 2)).Should().BeEqualTo(rule.Target);
         await (tree.Find(new(30, 4)) == null).Should().BeTrue();
     }
 
     [Test]
     public async Task LaterParentGenerationCannotCaptureAnOlderChild()
     {
-        var tree = new RouteProcessTree(new([Rule("Parent.exe")]), []);
+        var tree = new RouteProcessTree(Rule("Parent.exe").Policy, []);
         tree.Update([Process(10, 5, 0, "Parent.exe"), Process(20, 2, 10, "Child.exe")]);
         await (tree.Find(new(20, 2)) == null).Should().BeTrue();
     }
@@ -79,8 +59,7 @@ public class ProcessTreeTests
     public async Task ProxyCoresAndExcludedSubtreesStayUnroutedEvenWithExplicitRules()
     {
         var rule = Rule("Parent.exe");
-        var child = Rule("Child.exe");
-        var tree = new RouteProcessTree(new([rule, child]), [40]);
+        var tree = new RouteProcessTree(rule.Policy, [40]);
         tree.Update([Process(10, 1, 0, "Parent.exe"), Process(20, 2, 10, "xray.exe"),
             Process(30, 3, 20, "Child.exe"), Process(40, 4, 10, "Excluded.exe"), Process(50, 5, 40, "Child.exe")]);
         foreach (var key in new[] { new RouteProcessKey(20, 2), new(30, 3), new(40, 4), new(50, 5) })
@@ -116,7 +95,7 @@ public class ProcessTreeTests
         using var snapshot = new RouteProcessSnapshot();
         var own = snapshot.Read().Single(p => p.Key.Pid == Environment.ProcessId);
         var rule = Rule(own.Name);
-        var tree = new RouteProcessTree(new([rule]), []);
+        var tree = new RouteProcessTree(rule.Policy, []);
         // Exercise x86-to-x64 process lookup when this test host runs under WOW64.
         var systemDirectory = Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Sysnative") : Environment.SystemDirectory;
@@ -144,7 +123,7 @@ public class ProcessTreeTests
             await identity!.Value.Path.Should().BeEqualTo(info.Path);
             await info.ParentPid.Should().BeEqualTo(Environment.ProcessId);
             tree.Update(processes);
-            await tree.Find(info.Key).Should().BeEqualTo(rule);
+            await tree.Find(info.Key).Should().BeEqualTo(rule.Target);
             await child.StandardInput.WriteLineAsync("");
             // Wait for the kernel handle: HasExited/WaitForExitAsync can observe
             // an exit code before native process teardown has finished.

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!--
     Microsoft ResX Schema
@@ -1909,29 +1909,8 @@
   <data name="AppRoutingInterfacesHelp" xml:space="preserve">
     <value>僅對選取的介面套用應用程式路由規則。新介面首次發現時採用開關設定；現有選擇保持不變。變更選擇後，請重新啟動被路由的應用程式。</value>
   </data>
-  <data name="AppRoutingMonitor" xml:space="preserve">
-    <value>監控</value>
-  </data>
-  <data name="AppRoutingInterfaceUnavailable" xml:space="preserve">
-    <value>目前不存在</value>
-  </data>
-  <data name="AppRoutingAddProcessRule" xml:space="preserve">
-    <value>新增處理程序規則</value>
-  </data>
-  <data name="AppRoutingAddWindowsAppRule" xml:space="preserve">
-    <value>新增 Windows 應用程式規則</value>
-  </data>
   <data name="AppRoutingWindowsApps" xml:space="preserve">
     <value>Windows 應用程式</value>
-  </data>
-  <data name="AppRoutingRuleName" xml:space="preserve">
-    <value>規則名稱</value>
-  </data>
-  <data name="AppRoutingRuleColumn" xml:space="preserve">
-    <value>應用程式 / 規則</value>
-  </data>
-  <data name="AppRoutingEditWindowsApps" xml:space="preserve">
-    <value>編輯 Windows 應用程式</value>
   </data>
   <data name="AppRoutingPackageSearch" xml:space="preserve">
     <value>搜尋套件</value>
@@ -1951,20 +1930,11 @@
   <data name="AppRoutingPackageUnavailable" xml:space="preserve">
     <value>此帳戶未安裝</value>
   </data>
-  <data name="AppRoutingPackageAssigned" xml:space="preserve">
-    <value>已指派給「{0}」</value>
-  </data>
-  <data name="AppRoutingPackageRequired" xml:space="preserve">
-    <value>請輸入規則名稱並至少選取一個套件。</value>
-  </data>
-  <data name="AppRoutingPackageConflict" xml:space="preserve">
-    <value>每個套件只能屬於一條已啟用的 Windows 應用程式規則。</value>
-  </data>
   <data name="AppRoutingPackageImport" xml:space="preserve">
     <value>匯入回環豁免規則</value>
   </data>
   <data name="AppRoutingPackageImportResult" xml:space="preserve">
-    <value>已選取：{0}。未符合的豁免：{1}。已指派：{2}。未變更 Windows 權限。</value>
+    <value>已選取：{0}。未符合的豁免：{1}。未變更 Windows 權限。</value>
   </data>
   <data name="AppRoutingSelectVisible" xml:space="preserve">
     <value>選取可見項目</value>

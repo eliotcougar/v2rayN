@@ -81,7 +81,7 @@ public partial class RoutingBlockTests
     [Test]
     public async Task PackagePickerNamesIncludeSelectionsHiddenBySearchAndAreNeverSavedAsIdentifiers()
     {
-        using var picker = new AppRoutingPackageViewModel("Apps", ["Family_A", "Family_B"], new Dictionary<string, string>(),
+        using var picker = new AppRoutingPackageViewModel(["Family_A", "Family_B"],
             read: () => [new("Family_A", "Alpha", ""), new("Family_B", "Beta", "")]);
         await picker.Initialize();
         picker.Search = "Alpha";

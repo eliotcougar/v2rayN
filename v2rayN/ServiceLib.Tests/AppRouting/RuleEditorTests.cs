@@ -20,57 +20,6 @@ public class RuleEditorTests
     }
 
     [Test]
-    public async Task PathsWithSpacesAndQuotesSurviveNormalizationAndSerialization()
-    {
-        var path = Path.Combine(Path.GetTempPath(), "Applications With Spaces", "My Network App.exe");
-        var normalized = AppRouteMatcher.Normalize("  \"" + path + "\"  ", false);
-        var rule = JsonUtils.DeepCopy(new AppRouteRule { ExecutablePath = normalized });
-        await rule.ExecutablePath.Should().BeEqualTo(path);
-        await new AppRouteMatcher([rule]).Find(path, "My Network App.exe").Should().BeEqualTo(rule);
-        await rule.MatchByName.Should().BeFalse();
-    }
-
-    [Test]
-    public async Task NameRuleMatchesAllLocationsButExactPathWinsRegardlessOfOrder()
-    {
-        var path = Path.Combine(Path.GetTempPath(), "App One", "browser.exe");
-        var exact = new AppRouteRule { ExecutablePath = path };
-        var byName = new AppRouteRule { ExecutablePath = "BROWSER.EXE", MatchByName = true };
-        foreach (var rules in new[] { new[] { exact, byName }, new[] { byName, exact } })
-        {
-            var matcher = new AppRouteMatcher(rules);
-            await matcher.Find(path, "browser.exe").Should().BeEqualTo(exact);
-            await matcher.Find(Path.Combine(Path.GetTempPath(), "App Two", "browser.exe"), "browser.exe").Should().BeEqualTo(byName);
-            await matcher.Find(null, "browser.exe").Should().BeEqualTo(byName);
-            await (matcher.Find(null, "browser-helper.exe") == null).Should().BeTrue();
-        }
-    }
-
-    [Test]
-    public async Task NameRulesNeedNoInstalledFileAndRemainNamesAfterReload()
-    {
-        var name = "network-fixture-" + Guid.NewGuid().ToString("N") + ".exe";
-        var rule = new AppRouteRule { ExecutablePath = name, MatchByName = true, Kind = AppRouteKind.ActiveProfile };
-        var copy = JsonUtils.DeepCopy(rule);
-        await copy.MatchByName.Should().BeTrue();
-        await copy.ExecutablePath.Should().BeEqualTo(name);
-        await AppRouteMatcher.Normalize(Path.Combine(Path.GetTempPath(), "Program Files", "My App.exe"), true).Should().BeEqualTo("My App.exe");
-    }
-
-    [Test]
-    public async Task RemovedExecutableDoesNotInvalidateOtherRulesOrBroadenPathMatching()
-    {
-        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "Removed app.exe");
-        var removed = new AppRouteRule { ExecutablePath = path, Kind = AppRouteKind.ActiveProfile };
-        var other = new AppRouteRule { ExecutablePath = "Installed app.exe", MatchByName = true, Kind = AppRouteKind.ActiveProfile };
-        var reloaded = JsonUtils.DeepCopy(new List<AppRouteRule> { removed, other });
-        var matcher = new AppRouteMatcher(reloaded);
-        await matcher.Find(null, "Installed app.exe").Should().BeEqualTo(reloaded[1]);
-        await (matcher.Find(null, "Removed app.exe") == null).Should().BeTrue();
-        await matcher.Find(path, "Removed app.exe").Should().BeEqualTo(reloaded[0]);
-    }
-
-    [Test]
     public async Task NetworkPickerGroupsAllProtocolsAndFiltersNamePidAndFullPath()
     {
         var path = Path.Combine(Path.GetTempPath(), "Program Files", "Network App.exe");
@@ -155,36 +104,33 @@ public class RuleEditorTests
     }
 
     [Test]
-    public async Task PackagePickerSearchKeepsSelectionAndImportMergesWithoutStealingOtherRules()
+    public async Task PackagePickerSearchKeepsSelectionAndImportMergesWithExistingChecks()
     {
         var catalog = new[] { new RoutePackage("One", "First", "Publisher"), new RoutePackage("Two", "Second", "Publisher"),
             new RoutePackage("Three", "Third", "Publisher") };
-        using var editor = new AppRoutingPackageViewModel("Group", ["Missing"], new Dictionary<string, string> { ["Two"] = "Other rule" },
+        using var editor = new AppRoutingPackageViewModel(["Missing"],
             () => catalog, _ => new(["One", "Two"], 2));
         await editor.Initialize();
         await editor.Packages.Single(p => p.Family == "Missing").Selected.Should().BeTrue();
-        await editor.Packages.Single(p => p.Family == "Two").CanSelect.Should().BeFalse();
         editor.Search = "Third";
         await editor.SelectVisibleCmd.Execute().ToTask();
         await editor.ImportCmd.Execute().ToTask();
-        await editor.SelectedFamilies().Order().SequenceEqual(new[] { "Missing", "One", "Three" }).Should().BeTrue();
+        await editor.SelectedPackageNames().Keys.Order().SequenceEqual(new[] { "Missing", "One", "Three", "Two" }).Should().BeTrue();
         await editor.Packages.Single().Family.Should().BeEqualTo("Three");
         await editor.ClearVisibleCmd.Execute().ToTask();
-        await editor.SelectedFamilies().Order().SequenceEqual(new[] { "Missing", "One" }).Should().BeTrue();
-        await editor.Status.Should().BeEqualTo(string.Format(ServiceLib.Resx.ResUI.AppRoutingPackageImportResult, 1, 2, 1));
+        await editor.SelectedPackageNames().Keys.Order().SequenceEqual(new[] { "Missing", "One", "Two" }).Should().BeTrue();
+        await editor.Status.Should().BeEqualTo(string.Format(ServiceLib.Resx.ResUI.AppRoutingPackageImportResult, 2, 2));
         await editor.CanConfirm.Should().BeTrue();
-        editor.Name = "  ";
-        await editor.CanConfirm.Should().BeFalse();
     }
 
     [Test]
     public async Task FailedPackageImportKeepsExistingChecksAndDialogCanStillBeSaved()
     {
-        using var editor = new AppRoutingPackageViewModel("Group", ["One"], new Dictionary<string, string>(),
+        using var editor = new AppRoutingPackageViewModel(["One"],
             () => [new("One", "First", "")], _ => throw new IOException("Fixture import failure"));
         await editor.Initialize();
         await editor.ImportCmd.Execute().ToTask();
-        await editor.SelectedFamilies().Single().Should().BeEqualTo("One");
+        await editor.SelectedPackageNames().Keys.Single().Should().BeEqualTo("One");
         await editor.CanConfirm.Should().BeTrue();
         await editor.Status.Contains("Fixture import failure").Should().BeTrue();
     }
@@ -194,7 +140,7 @@ public class RuleEditorTests
     {
         var release = new TaskCompletionSource();
         var entered = new TaskCompletionSource();
-        var editor = new AppRoutingPackageViewModel("", [], new Dictionary<string, string>(), () =>
+        var editor = new AppRoutingPackageViewModel([], () =>
         {
             entered.SetResult();
             release.Task.GetAwaiter().GetResult();

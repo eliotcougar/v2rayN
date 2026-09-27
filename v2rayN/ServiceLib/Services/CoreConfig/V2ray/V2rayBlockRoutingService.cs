@@ -25,7 +25,7 @@ public partial class CoreConfigV2rayService
             switch (filter.Selector)
             {
                 case RoutingSelector.Domain:
-                    rule.domain = values.Where(v => !v.StartsWith('#')).Select(v => v.Replace(Global.RoutingRuleComma, ",")).ToList();
+                    rule.domain = values.Select(v => v.Replace(Global.RoutingRuleComma, ",")).ToList();
                     break;
                 case RoutingSelector.IP: rule.ip = values; break;
                 case RoutingSelector.Port: rule.port = string.Join(',', values); break;

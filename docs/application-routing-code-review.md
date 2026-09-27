@@ -22,11 +22,11 @@ as the implementation changes.
 
 | Read | Files | Main review question |
 | --- | --- | --- |
-| 1 | [AppRoutingItem.cs](../v2rayN/ServiceLib/Models/Configs/AppRoutingItem.cs), [AppRoutingLifecycle.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRoutingLifecycle.cs) | What is persisted, and what happens on start, stop, and failure? |
+| 1 | [AppRoutingItem.cs](../v2rayN/ServiceLib/Models/Configs/AppRoutingItem.cs), [AppRoutingManager.cs](../v2rayN/ServiceLib/Manager/AppRoutingManager.cs) | What is persisted, and what happens on start, stop, and failure? |
 | 2 | [AppRoutingSettingsViewModel.cs](../v2rayN/ServiceLib/ViewModels/AppRoutingSettingsViewModel.cs) | When do draft edits become saved rules and running routes? |
 | 2a | [RouteInterfaceCatalog.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteInterfaceCatalog.cs), [RouteInterfaceMonitor.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteInterfaceMonitor.cs), [AppRoutingInterfaceViewModel.cs](../v2rayN/ServiceLib/ViewModels/AppRoutingInterfaceViewModel.cs) | How are adapter choices remembered and applied without replacing the capture engine? |
 | 3 | [AppRoutingManager.cs](../v2rayN/ServiceLib/Manager/AppRoutingManager.cs), [RouteRuntime.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteRuntime.cs), [RouteProfileInstance.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProfileInstance.cs) | Who prepares, commits, supervises and retires runtime resources? |
-| 4 | [RouteAttribution.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteAttribution.cs), [AppRouteMatcher.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRouteMatcher.cs), [RouteOwnerTable.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteOwnerTable.cs), [RouteProcessTree.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessTree.cs) | How does a packet acquire an executable rule? |
+| 4 | [RouteSharedRules.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteSharedRules.cs), [RouteAttribution.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteAttribution.cs), [RouteOwnerTable.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteOwnerTable.cs), [RouteProcessTree.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessTree.cs) | How does a packet acquire a main-table routing target? |
 | 4a | [RouteProcessEvents.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessEvents.cs), [RouteSocketEvents.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteSocketEvents.cs) | How are short-lived processes and closed sockets retained without following reused identities? |
 | 5 | [AppRouteEngine.cs](../v2rayN/ServiceLib/Services/AppRouting/AppRouteEngine.cs), [RouteNatTable.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteNatTable.cs) | How do TCP reflection, connection reuse, and shutdown work? |
 | 6 | [RouteUdpSession.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteUdpSession.cs), [RouteConnector.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteConnector.cs) | How are UDP ownership, SOCKS negotiation, and internal profile endpoints handled? |
@@ -45,7 +45,7 @@ flowchart TD
     VM --> CFG[Persisted Config.AppRouting]
     VM --> MGR[AppRoutingManager]
     MGR --> RT[RouteRuntime: stage and commit]
-    RT --> XRAY[Optional isolated Xray cores]
+    RT --> XRAY[One shared Xray core]
     RT --> ENGINE[Persistent AppRouteEngine]
     APP[Application packet] --> CAP[WinDivert capture]
     ENGINE --> CAP
@@ -62,17 +62,17 @@ flowchart TD
     UDP --> OUT
 ```
 
-`AppRoutingManager` serializes runtime changes, prepares saved-profile endpoints,
+`AppRoutingManager` serializes runtime changes, prepares the shared routing core,
 and supervises a `RouteRuntime`. That runtime owns the exclusive capture lease,
-engine, and individually owned Xray instances. Each `RouteProfileInstance` owns
+engine, and one Xray instance. `RouteProfileInstance` owns
 its process, job, generated file, and authenticated listener endpoint.
 `AppRouteEngine` owns the capture handle, local TCP listeners, connection/session
 tables, and the background attribution source. `RouteConnector` establishes an
 outbound, but does not select a rule or modify persisted configuration.
 
-`IAppRoutingRuntime` exposes only `IsEnabled`, `StartAsync`, and `StopAsync` to
-the editor and lifecycle helper. Tests replace this boundary to exercise state
-transitions without starting a driver or a core.
+`RefreshAsync` applies the saved enabled preference directly. `RouteRuntime`
+accepts injected engine, core-start and lease operations so tests exercise the
+production ownership transitions without starting a driver or a core.
 
 ### Windows App package groups
 
@@ -192,10 +192,13 @@ Process rows infer full path, folder or executable-name matching from their valu
 Windows App rows persist family identity, not localized names. Those names are
 loaded asynchronously for display and sorting only.
 
-The packet/transport layer still uses internal `AppRouteRule` targets and the
-existing matcher types. Production plans contain no standalone rules or fallback
-profile plans; the shared policy creates targets from the ordinary routing table.
-Protected process ancestry remains excluded before any shared selection.
+The observer's `RouteSharedPolicy` creates immutable
+[RouteTarget](../v2rayN/ServiceLib/Services/AppRouting/RouteTarget.cs) objects from
+main-table application membership. Each target contains its membership key,
+endpoint resolver and optional port-capture mask. It belongs to one shared core;
+reference identity determines whether existing connections can survive a reload.
+There is no second rule model, standalone matcher, or serialized per-flow rule
+signature. Protected process ancestry remains excluded before any selection.
 
 ## 3. Editor, persistence, and runtime state
 
@@ -208,7 +211,7 @@ serialized discovery/commit path without saving an unfinished switch draft.
 
 `RoutingSettingViewModel.ApplyChanges` awaits the reload callback supplied by MainWindowViewModel after saved routing edits, selection changes and routing-option saves. Closing the dialog cannot unsubscribe or discard the final request. Changes therefore reach the existing reload coordinator immediately,
 without requiring the user to close the routing list. Normal settings confirmation
-also reloads the core. The reload path calls AppRoutingLifecycle.SynchronizeAsync
+also reloads the core. The reload path calls AppRoutingManager.RefreshAsync
 before replacing the main core or waiting for availability checks.
 
 Every enabled reload calls StartAsync to apply the latest saved policy, even if
@@ -216,7 +219,10 @@ routing is currently stopped or faulted. Disabled reloads call StopAsync. The
 runtime never clears the saved preference after failure or normal shutdown.
 Staging failure keeps the previous working policy and reports the error; a later
 reload retries. Interface observation starts before the initial reload. TUN and
-application routing remain mutually exclusive.
+application routing remain mutually exclusive. An enabled policy with no eligible
+application or narrow-port selectors stops the runtime and releases the capture
+lease without clearing the preference. The manager marks startup in progress
+before awaiting interface discovery so TUN cannot be enabled during preparation.
 
 WPF and Avalonia use the same settings and rule-block view models. Their code-behind
 supplies owned platform picker windows. The standalone window, menu command, view
@@ -233,7 +239,7 @@ runtime transformation never changes the saved profile selection or credentials.
 [RouteRuntime.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteRuntime.cs) separates
 preparation from commitment. Initial startup acquires a machine-wide
 [RouteCaptureLease](../v2rayN/ServiceLib/Services/AppRouting/RouteCaptureLease.cs)
-before starting cores or interception. The named `Global\v2rayN.ApplicationRouting`
+before starting the shared core or interception. The named `Global\v2rayN.ApplicationRouting`
 event is retained as an ownership token, not signalled. An existing token rejects
 a second owner. Unlike a mutex, releasing this token is not thread-affine, which
 matters across `await`. Process exit releases the handle. This coordinates copies
@@ -241,15 +247,16 @@ implementing this feature; it cannot coordinate arbitrary third-party filters.
 
 The replacement sequence is:
 
-1. Build effective profile plans and reuse live cores with identical fingerprints.
-2. Start new cores and authenticate their SOCKS listeners while the old engine,
-   old cores, and old rules continue serving traffic.
-3. Create runtime rule copies pointing to the prepared endpoints. Prepare an
-   ownership index for that policy outside the packet lock.
-4. Commit the policy under the engine's packet lock. Keep unchanged TCP mappings
-   and UDP sessions; cancel only those whose rule changed or disappeared.
-5. Publish resource ownership and retire superseded cores after their routes
-   have been detached. The capture handle and TCP listeners remain in place.
+1. Fingerprint the effective main-table plan and reuse the live shared core if
+   its fingerprint is unchanged.
+2. Otherwise start and authenticate a replacement core while the old core,
+   policy and connections continue serving traffic.
+3. Prepare an ownership index for the shared policy outside the packet lock.
+4. Commit the policy under the engine's packet lock. Retain TCP mappings and UDP
+   sessions whose targets belong to the reused core. Replacing the core retires
+   all old targets, even if their membership keys have the same text.
+5. Publish resource ownership and dispose the superseded core after detaching
+   its routes. The capture handle and TCP listeners remain in place.
 
 Preparation failure disposes only newly created resources and preserves the old
 runtime. On initial failure it also releases the new capture lease. The engine's
@@ -260,8 +267,10 @@ token after commitment would incorrectly dispose a core now used by live rules.
 
 Stop cancels an outstanding preparation before waiting for the lifecycle semaphore.
 Shutdown sets its flag before stopping, so delayed startup cannot outlive exit.
-An unsuccessful apply retains saved edits as well as the previous live policy;
-the normal error notification tells the user that the new settings did not apply.
+An unsuccessful preparation retains saved edits as well as the previous live
+policy; the main application log reports the failure. Shutdown detaches ownership
+before disposal and releases the core and capture lease even if engine cleanup
+throws. Failed startup likewise releases each newly acquired resource.
 
 All destinations now come from the active main routing table. A supervised shared
 Xray core evaluates proxy, direct, block and saved-profile outbounds in that order
@@ -275,7 +284,7 @@ fallback profiles and their optional copied-block-rule preparation are removed.
 the existing `CoreConfigContextBuilder`, with TUN excluded from the isolated configuration. Custom full
 configurations remain unsupported. The generated template uses fixed placeholder
 listener credentials/port. A SHA-256 fingerprint covers this effective template,
-the resolved core path, and sorted core environment settings. Profile, transport,
+application branch metadata, the resolved core path, and sorted core environment settings. Profile, transport,
 chain/balancer, DNS and routing changes therefore invalidate the plan
 without maintaining a separate list of every dependency property. Identical
 effective plans share a core, including across reloads.
@@ -560,7 +569,8 @@ retirement timestamp begins the late-response retention interval.
 ## 7. UDP: session ownership, buffering, and replies
 
 UDP does not use TCP reflection. The engine keys `RouteUdpSession` by process
-identity (PID plus creation time), original local address/port, and rule ID.
+identity (PID plus creation time), original local address/port, target membership
+key and interface index.
 The remote peer is deliberately absent: an application's local UDP endpoint can
 send to multiple destinations through one outbound socket/SOCKS association.
 This preserves a stable outbound source port for that session and accepts replies
@@ -575,8 +585,8 @@ sessions; NETWORK has no socket ID, so correlation remains asynchronous.
 including process creation time and endpoint ID. Once ownership is lost, reply
 delivery stays invalid. Outbound datagrams already attributed at capture may
 finish even after the sender exits during proxy setup. Their separate `canSend`
-predicate checks runtime, unchanged rule signature and monitored interface; the
-signature is prepared once per association, never serialized per datagram. A
+predicate checks that the current policy still owns the same target object and
+that the interface remains monitored. No rule serialization is needed. A
 discarded late reply does not cancel remaining approved outbound datagrams.
 
 For SOCKS routes, `Run` opens a control connection, binds a UDP socket on that
@@ -759,22 +769,24 @@ cover these boundaries:
 
 | Test file | Behaviors to inspect |
 | --- | --- |
-| `LifecycleTests.cs` | Persistence, startup restoration, explicit disable, save failures, and failed manual enable. |
-| `RuleEditorTests.cs`, `SettingsTests.cs`, `LifecycleTests.cs` | Picker behavior, settings persistence, non-administrator state, retired-rule compatibility and retry/reload synchronization. |
-| `ProcessTreeTests.cs` | Own/ancestor precedence, exited parents, recycled PIDs, excluded subtrees, and native read-only process timing. |
+| `RuleEditorTests.cs`, `SettingsTests.cs` | Picker behavior, settings persistence, non-administrator state, retired-rule compatibility and failure reporting. |
+| `SharedRoutingTests.cs`, `PortRoutingTests.cs` | Main-table order, membership projection, child/path requirements, target ownership across core replacement, narrow-port capture and full-range fallback preservation. |
+| `ProcessTreeTests.cs`, `PackageRuleTests.cs` | Process/package ancestry, exited parents, recycled PIDs, excluded subtrees, missing identities and native read-only process timing. |
 | `ProcessEventDecoderTests.cs` | Binary ETW schemas, variable-length SIDs, exact FILETIMEs, package identity, truncation and unknown-version rejection. |
 | `EventAttributionTests.cs` | Delayed short-lived ancestry, sequence matching, historical PID/socket ownership, shared binds, lifecycle gaps, queue overflow, observer failure/health-check races, native metadata and path normalization. |
 | `OwnerTableTests.cs` | Real dual-stack TCP/UDP owner tables parsed into the production index. |
 | `AttributionTests.cs` | Indexed lookup cost, ownership changes, bounded deferral, selective TCP retirement and native socket closure. |
-| `RuntimeTests.cs` | Staging/reuse, rollback, cancellation at commitment, failure observation and exclusive capture ownership. |
+| `RuntimeTests.cs` | Staging/reuse, rollback, cancellation at commitment, failure observation, empty-policy shutdown and release of every owned resource after cleanup failure. |
 | `PacketTests.cs` | Native address layout, IPv4/IPv6 bounds and rewriting, scope, NAT collisions, and SYN/reconnect handling. |
 | `PacketBatchTests.cs` | Mixed IP framing, metadata alignment, maximum packet size, bounded flushing, owned output, and no replay after injection failure. |
 | `FragmentTests.cs` | Out-of-order assembly, early unselected bypass, policy invalidation, SYN/reflection exceptions, overlap and expiry. |
-| `SocksTests.cs` | Current active listener, authentication, split replies, domain bind replies, IPv6, framing, and failed-method behavior. |
+| `SocksTests.cs` | Internal endpoint authentication, split replies, domain bind replies, IPv6, framing, and failed-method behavior. |
 | `UdpSessionTests.cs` | Byte budget and release, pooled buffer ownership on send/rejection/cancellation/failure, exact wire/reply payloads from empty through large datagrams, queued ownership, sends after process exit with discarded replies, stale/reused owners, multi-peer association identity, actual reply peers, domain relay endpoints, and internal endpoint preparation. |
 | `ShutdownTests.cs` | Accept reset/abort recovery, fatal listener shutdown, cancellation during handshake stages, and late task registration during disposal. |
 
-Most tests use synthetic packet data, injected ownership/runtime operations, or
+`RouteTestFactory` builds the production shared policy for attribution tests;
+these tests no longer exercise a retired standalone matcher. Most tests use
+synthetic packet data, injected ownership/runtime operations, or
 owned loopback sockets. Windows-specific tests also read native process/socket
 tables without starting WinDivert or an ETW session. Process/socket event tests
 feed deterministic records through the production history and decision code.

@@ -13,12 +13,12 @@ public sealed class RoutingFilter
     public List<RoutingApplicationRow>? Applications { get; set; }
 
     public List<string> EffectiveValues() => Applications == null ? Values
-        : Applications.Where(row => row.Enabled).Select(row => row.MatchValue(Selector)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        : Applications.Where(row => row.Enabled).Select(row => row.MatchValue(Selector)).Distinct().ToList();
 }
 
 public enum RoutingProcessMode { FullPath = 0, Folder = 1, Name = 2 }
 
-/// <summary>The original selection is retained when changing match mode.</summary>
+/// <summary>A process path, folder or name, or a stable Windows package family.</summary>
 public sealed class RoutingApplicationRow
 {
     public bool Enabled { get; set; } = true;
