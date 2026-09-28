@@ -102,7 +102,7 @@ internal sealed class RouteProcessTree(RouteSharedPolicy? rules, IEnumerable<int
 
     public RouteTarget? Find(RouteProcessKey key) => Decide(key).Rule;
 
-    public RouteDecision Decide(RouteProcessKey key, long observedSince = 0)
+    public RouteDecision Decide(RouteProcessKey key, long observedSince = 0, string? serviceName = null)
     {
         if (!_nodes.TryGetValue(key, out var node))
         {
@@ -135,7 +135,7 @@ internal sealed class RouteProcessTree(RouteSharedPolicy? rules, IEnumerable<int
                 (ancestor == node ? rules?.HasPackages == true : rules?.PackagesIncludeChildren == true);
         }
         if (incomplete) { return RouteDecision.Unresolved; }
-        var match = rules?.Select(lineage);
+        var match = rules?.Select(lineage, serviceName);
         return new(match == null ? RouteDecisionKind.Unselected : RouteDecisionKind.Selected, key, match);
     }
 }

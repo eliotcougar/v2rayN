@@ -1,0 +1,54 @@
+<base:WindowBase
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:base="clr-namespace:v2rayN.Base"
+    xmlns:vms="clr-namespace:ServiceLib.ViewModels;assembly=ServiceLib"
+    xmlns:resx="clr-namespace:ServiceLib.Resx;assembly=ServiceLib"
+    x:Class="v2rayN.Views.AppRoutingServiceWindow"
+    x:TypeArguments="vms:AppRoutingServiceViewModel" Style="{StaticResource WindowGlobal}"
+    Title="{x:Static resx:ResUI.AppRoutingChooseServices}" Width="840" Height="680"
+    MinWidth="620" MinHeight="520" ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="{x:Static resx:ResUI.AppRoutingServiceHelp}" TextWrapping="Wrap" Margin="4,0,4,12" />
+            <TextBlock Text="{x:Static resx:ResUI.AppRoutingServiceSearch}" Margin="4,0" />
+            <TextBox Text="{Binding Search, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="4,4" Style="{StaticResource DefTextBox}"
+                AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingServiceSearch}" />
+            <WrapPanel Margin="0,4,0,8">
+                <Button Content="{x:Static resx:ResUI.AppRoutingSelectVisible}" Command="{Binding SelectVisibleCmd}" Margin="4" Padding="12,6" Style="{StaticResource DefButton}" />
+                <Button Content="{x:Static resx:ResUI.AppRoutingClearVisible}" Command="{Binding ClearVisibleCmd}" Margin="4" Padding="12,6" Style="{StaticResource DefButton}" />
+            </WrapPanel>
+        </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+            <ItemsControl ItemsSource="{Binding Services}" HorizontalContentAlignment="Stretch">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <CheckBox IsChecked="{Binding Selected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            Height="56" Margin="4,0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center"
+                            AutomationProperties.Name="{Binding DisplayName}">
+                            <StackPanel Margin="8,0">
+                                <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayName}" />
+                                <TextBlock Text="{Binding Details}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Details}" Opacity="0.7" />
+                            </StackPanel>
+                        </CheckBox>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Margin="4,12,4,0">
+            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,0,0,6" />
+            <DockPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <Button x:Name="btnSave" Content="{x:Static resx:ResUI.TbConfirm}" IsEnabled="{Binding CanConfirm}" IsDefault="True" Margin="4,0" Padding="12,6" Style="{StaticResource DefButton}" />
+                    <Button x:Name="btnCancel" Content="{x:Static resx:ResUI.TbCancel}" IsCancel="True" Margin="4,0,0,0" Padding="12,6" Style="{StaticResource DefButton}" />
+                </StackPanel>
+                <TextBlock Text="{Binding SelectionSummary}" VerticalAlignment="Center" />
+            </DockPanel>
+        </StackPanel>
+    </Grid>
+</base:WindowBase>

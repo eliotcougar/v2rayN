@@ -1860,6 +1860,9 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>Teljes elérési út, / jellel végződő mappa vagy fájlnév. A gyermekfolyamatok a WinDivert-útválasztásra vonatkoznak.</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>Adja meg a Windows-szolgáltatás rövid nevét, például: Dnscache. A kiválasztott szolgáltatás minden forgalmára ez a szabály érvényes; a kérelmező alkalmazás nem azonosítható.</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>Az engedélyezett alkalmazások VAGY kapcsolatban állnak. A gyermekfolyamatok a WinDivertre vonatkoznak. Rendezéshez kattintson a névoszlop fejlécére.</value>
   </data>
@@ -1871,6 +1874,12 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Process</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>Szolgáltatás</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>Szolgáltatásnév hozzáadása</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Windows App</value>
@@ -1904,5 +1913,23 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>Le</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>Szolgáltatások kiválasztása</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>Válassza ki a Windows-szolgáltatásokat név szerint. A kiválasztott szolgáltatás teljes forgalma ezt a szabályt követi, beleértve a más alkalmazások által átadott kéréseket is. A kezdeményező alkalmazás nem azonosítható.</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>Keresés szolgáltatásnév vagy megjelenített név alapján</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>Windows-szolgáltatások beolvasása…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>Szolgáltatások: {0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>Nincs telepítve</value>
   </data>
 </root>

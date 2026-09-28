@@ -1989,6 +1989,9 @@
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>Укажите полный путь, папку с / в конце или имя файла. Дочерние процессы учитываются при маршрутизации WinDivert.</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>Укажите короткое имя службы Windows, например Dnscache. Весь трафик выбранной службы следует этому правилу; приложение-инициатор не определяется.</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>Включённые приложения объединяются через ИЛИ. Дочерние процессы — для WinDivert. Нажмите заголовок имени для сортировки.</value>
   </data>
@@ -2000,6 +2003,12 @@
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Процесс</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>Служба</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>Добавить имя службы</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Приложение Windows</value>
@@ -2033,5 +2042,23 @@
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>Ниже</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>Выбрать службы</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>Выберите службы Windows по имени. Весь трафик выбранной службы следует её правилу, в том числе запросы, переданные другими приложениями. Приложение-инициатор не определяется.</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>Поиск по имени службы или отображаемому названию</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>Чтение служб Windows…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>Служб: {0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>Не установлена</value>
   </data>
 </root>

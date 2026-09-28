@@ -5,6 +5,44 @@ namespace ServiceLib.Tests.AppRouting;
 public class OwnerTableTests
 {
     [Test]
+    public async Task OwnerModuleTablesPreserveTheCurrentProcessesLoopbackSockets()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
+        using var server = await listener.AcceptTcpClientAsync();
+        using var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var tcpPort = (ushort)((IPEndPoint)client.Client.LocalEndPoint!).Port;
+        var udpPort = (ushort)((IPEndPoint)udp.Client.LocalEndPoint!).Port;
+        var pid = Environment.ProcessId;
+        var services = new RouteServiceSnapshot([new("Chosen", "Chosen", pid), new("Other", "Other", pid)],
+            [new RouteProcessInfo(new(pid, 1), 0, "ServiceLib.Tests.exe", null)],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Chosen" });
+        var tcp = RouteServiceOwnerTable.Read(6, AddressFamily.InterNetwork, services);
+        var datagrams = RouteServiceOwnerTable.Read(17, AddressFamily.InterNetwork, services);
+        await tcp.Any(row => row.Pid == pid && row.Port == tcpPort).Should().BeTrue();
+        await datagrams.Any(row => row.Pid == pid && row.Port == udpPort).Should().BeTrue();
+        if (Socket.OSSupportsIPv6)
+        {
+            using var ipv6Listener = new TcpListener(IPAddress.IPv6Loopback, 0);
+            ipv6Listener.Start();
+            using var ipv6Client = new TcpClient(AddressFamily.InterNetworkV6);
+            await ipv6Client.ConnectAsync(IPAddress.IPv6Loopback, ((IPEndPoint)ipv6Listener.LocalEndpoint).Port);
+            using var ipv6Server = await ipv6Listener.AcceptTcpClientAsync();
+            using var ipv6Udp = new UdpClient(new IPEndPoint(IPAddress.IPv6Loopback, 0));
+            var tcp6Port = (ushort)((IPEndPoint)ipv6Client.Client.LocalEndPoint!).Port;
+            var udp6Port = (ushort)((IPEndPoint)ipv6Udp.Client.LocalEndPoint!).Port;
+            await RouteServiceOwnerTable.Read(6, AddressFamily.InterNetworkV6, services)
+                .Any(row => row.Pid == pid && row.Port == tcp6Port).Should().BeTrue();
+            await RouteServiceOwnerTable.Read(17, AddressFamily.InterNetworkV6, services)
+                .Any(row => row.Pid == pid && row.Port == udp6Port).Should().BeTrue();
+        }
+        await RouteServiceCatalog.Read().Any(service => service.Name.Length > 0).Should().BeTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DualStackUdpSocketIsFoundForItsIpv4Packets(bool connected)

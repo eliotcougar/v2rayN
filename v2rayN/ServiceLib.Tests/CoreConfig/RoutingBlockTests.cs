@@ -60,11 +60,11 @@ public partial class RoutingBlockTests
     {
         var source = new RulesItem();
         var editor = new RoutingRuleBlocksViewModel(source);
-        await editor.AvailableSelectors.Count.Should().BeEqualTo(8);
+        await editor.AvailableSelectors.Count.Should().BeEqualTo(9);
         editor.AddFilter(RoutingSelector.InboundTag, ["socks"]);
         editor.AddFilter(RoutingSelector.InboundTag, ["tun"]);
         await editor.Filters.Count.Should().BeEqualTo(1);
-        await editor.AvailableSelectors.Count.Should().BeEqualTo(7);
+        await editor.AvailableSelectors.Count.Should().BeEqualTo(8);
         await editor.TrySave().Should().BeTrue();
         await CoreConfigV2rayService.CompileBlockRules(source, new()).Single().inboundTag!.Should().BeEquivalentTo(["socks"]);
     }
@@ -117,6 +117,27 @@ public partial class RoutingBlockTests
         await CoreConfigV2rayService.CompileBlockRules(rule, packages).Count.Should().BeEqualTo(2);
         await CoreConfigV2rayService.CompileBlockRules(rule, new()).Single().process!.Should().BeEquivalentTo(["client.exe"]);
         await CoreConfigSingboxService.CompileBlockRule(rule, new(), true)!.process_name!.Should().BeEquivalentTo(["client.exe"]);
+    }
+
+    [Test]
+    public async Task ServiceRowsPersistByShortNameAndNeverCompileAsUnconditionalCoreRules()
+    {
+        var source = new RulesItem { OutboundTag = Global.DirectTag };
+        var editor = new RoutingRuleBlocksViewModel(source);
+        editor.AddFilter(RoutingSelector.Service, ["Dnscache"]);
+        await editor.TrySave().Should().BeTrue();
+        await source.Blocks!.Filters.Single().Applications!.Single().Value.Should().BeEqualTo("Dnscache");
+        await CoreConfigV2rayService.CompileBlockRules(source, new()).Count.Should().BeEqualTo(0);
+        await CoreConfigSingboxService.CompileBlockRule(source, new(), true).Should().BeNull();
+
+        source.Blocks.Filters[0].Applications![0].IncludeChildren = true;
+        await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => RoutingBlockRules.Validate(source)));
+        source.Blocks.Filters[0].Applications![0].IncludeChildren = false;
+        source.Blocks.Filters[0].Applications![0].Value = "C:/Windows/Dnscache";
+        await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => RoutingBlockRules.Validate(source)));
+        source.Blocks.Filters[0].Applications = null;
+        source.Blocks.Filters[0].Values = ["C:/Windows/Dnscache"];
+        await Assert.ThrowsAsync<ArgumentException>(() => Task.Run(() => RoutingBlockRules.Validate(source)));
     }
 
     [Test]

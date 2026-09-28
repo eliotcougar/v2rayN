@@ -1,7 +1,8 @@
 ﻿namespace ServiceLib.Services.AppRouting;
 
 internal enum RouteDecisionKind { Selected, Unselected, Unresolved, Ambiguous }
-internal sealed record RouteDecision(RouteDecisionKind Kind, RouteProcessKey? Process = null, RouteTarget? Rule = null, ulong Endpoint = 0)
+internal sealed record RouteDecision(RouteDecisionKind Kind, RouteProcessKey? Process = null, RouteTarget? Rule = null,
+    ulong Endpoint = 0, bool ServicePending = false)
 {
     public static readonly RouteDecision Unresolved = new(RouteDecisionKind.Unresolved);
     public static readonly RouteDecision Unselected = new(RouteDecisionKind.Unselected);
@@ -27,13 +28,17 @@ internal sealed class RouteAttributionSnapshot
 
     public RouteAttributionSnapshot(IEnumerable<RouteOwnerTable.Row> tcp, IEnumerable<RouteOwnerTable.Row> udp,
         Func<int, RouteDecision> decide, long readAt, RouteSocketSnapshot? events = null)
+        : this(tcp, udp, (pid, _) => decide(pid), readAt, events) { }
+
+    public RouteAttributionSnapshot(IEnumerable<RouteOwnerTable.Row> tcp, IEnumerable<RouteOwnerTable.Row> udp,
+        Func<int, string?, RouteDecision> decide, long readAt, RouteSocketSnapshot? events = null)
     {
         ReadAt = readAt;
         _events = events;
         _tcp = tcp.GroupBy(r => new RouteFlow(6, r.Local, r.Port, r.Remote!, r.RemotePort))
-            .ToDictionary(g => g.Key, g => Merge(g.Select(r => r.Pid).Distinct().Select(pid => decide(pid).ForFlow(g.Key))));
+            .ToDictionary(g => g.Key, g => Merge(g.Select(r => decide(r.Pid, r.ModuleName).ForFlow(g.Key)).Distinct()));
         _udp = udp.GroupBy(r => (r.Local, r.Port))
-            .ToDictionary(g => g.Key, g => g.Select(r => r.Pid).Distinct().Select(decide).Distinct().ToArray());
+            .ToDictionary(g => g.Key, g => g.Select(r => decide(r.Pid, r.ModuleName)).Distinct().ToArray());
     }
 
     // Null distinguishes missing fresh evidence from an unresolved owner in a
@@ -49,6 +54,10 @@ internal sealed class RouteAttributionSnapshot
         // A historical packet can legitimately predate the table's current owner.
         // For live endpoints, retain the existing shared-bind ambiguity checks.
         if (timestamp != 0 && observed != _events!.Find(flow, 0)) { return observed; }
+        // SOCKET events have a PID but no service name. A current owner-module row can
+        // resolve a shared host only when it agrees on the exact process generation.
+        if (observed.ServicePending && sampled?.Process == observed.Process && sampled.Kind != RouteDecisionKind.Unresolved)
+        { return sampled; }
         if (observed.Kind == RouteDecisionKind.Unresolved || sampled?.Kind == RouteDecisionKind.Unresolved) { return RouteDecision.Unresolved; }
         if (sampled == null || observed.Kind == sampled.Kind && observed.Process == sampled.Process && observed.Rule == sampled.Rule) { return observed; }
         return Merge(observed, sampled);
@@ -109,7 +118,9 @@ internal sealed class RouteAttributionSource : IDisposable
     private RouteProcessEvents? _processEvents;
     private RouteSocketEvents? _socketEvents;
     private long _lastProcessRead;
+    private long _lastServiceRead;
     private bool _readPackageIdentity;
+    private IReadOnlyList<RouteServiceInfo> _services = [];
 
     public void StartEvents(Action changed)
     {
@@ -138,7 +149,14 @@ internal sealed class RouteAttributionSource : IDisposable
             }
             if (_processEvents != null) { updates.AddRange(_processEvents.Drain(flushEvents)); }
             _tree.Update(updates);
-            var processes = new RouteProcessDecisions(_tree, _processEvents?.Started ?? 0);
+            if (policy.Routes?.HasServices == true && (readAt - _lastServiceRead >= 1000 || flushEvents || _lastServiceRead == 0))
+            {
+                _services = RouteServiceCatalog.Read();
+                _lastServiceRead = readAt;
+            }
+            var services = policy.Routes?.HasServices == true
+                ? new RouteServiceSnapshot(_services, _tree.Processes, policy.Routes.ServiceNames) : null;
+            var processes = new RouteProcessDecisions(_tree, _processEvents?.Started ?? 0, services);
             _sockets.Update(_socketEvents?.Drain() ?? [], Stopwatch.GetTimestamp(), (pid, at) => processes.OwnerAt(pid, at)?.ExitedAt);
             var sockets = _socketEvents == null ? null : _sockets.Snapshot((pid, at) =>
                 pid <= 4 || policy.Excluded.Contains(pid) ? RouteDecision.Unselected :
@@ -148,11 +166,13 @@ internal sealed class RouteAttributionSource : IDisposable
             foreach (var family in new[] { AddressFamily.InterNetwork, AddressFamily.InterNetworkV6 })
             {
                 if (family == AddressFamily.InterNetworkV6 && !Socket.OSSupportsIPv6) { continue; }
-                tcp.AddRange(RouteOwnerTable.Read(6, family));
-                udp.AddRange(RouteOwnerTable.Read(17, family));
+                tcp.AddRange(services?.HasSelectedHosts == true
+                    ? RouteServiceOwnerTable.Read(6, family, services) : RouteOwnerTable.Read(6, family));
+                udp.AddRange(services?.HasSelectedHosts == true
+                    ? RouteServiceOwnerTable.Read(17, family, services) : RouteOwnerTable.Read(17, family));
             }
-            return new(tcp, udp, pid => pid <= 4 || policy.Excluded.Contains(pid)
-                ? RouteDecision.Unselected : processes.Current(pid), readAt, sockets);
+            return new(tcp, udp, (pid, module) => pid <= 4 || policy.Excluded.Contains(pid)
+                ? RouteDecision.Unselected : processes.Current(pid, module), readAt, sockets);
         }
     }
 
@@ -170,12 +190,16 @@ internal sealed class RouteAttributionSource : IDisposable
 /// <summary>Generation-aware process decisions, computed off the packet path.</summary>
 internal sealed class RouteProcessDecisions
 {
+    private readonly RouteProcessTree _tree;
+    private readonly RouteServiceSnapshot? _services;
     private readonly Dictionary<int, RouteProcessInfo[]> _byPid;
     private readonly Dictionary<RouteProcessKey, RouteDecision> _decisions;
     private readonly long _observedSince;
 
-    public RouteProcessDecisions(RouteProcessTree tree, long observedSince)
+    public RouteProcessDecisions(RouteProcessTree tree, long observedSince, RouteServiceSnapshot? services = null)
     {
+        _tree = tree;
+        _services = services;
         _observedSince = observedSince;
         var processes = tree.Processes.ToArray();
         _byPid = processes.GroupBy(p => p.Key.Pid).ToDictionary(g => g.Key, g => g.OrderByDescending(p => p.Key.Started).ToArray());
@@ -190,7 +214,20 @@ internal sealed class RouteProcessDecisions
         return candidates.FirstOrDefault(p => p.StartedAt <= timestamp && (p.ExitedAt == null || p.ExitedAt >= timestamp));
     }
 
-    public RouteDecision At(int pid, long timestamp) => OwnerAt(pid, timestamp) is { } owner ? _decisions[owner.Key] : RouteDecision.Unresolved;
-    public RouteDecision Current(int pid) => _byPid.TryGetValue(pid, out var owners) && owners[0].Exited == null
-        ? _decisions[owners[0].Key] : RouteDecision.Unresolved;
+    private RouteDecision Decide(RouteProcessInfo owner, string? moduleName)
+    {
+        var basic = _decisions[owner.Key];
+        if (_services == null || !_services.ContainsSelected(owner.Key.Pid, owner.Key)) { return basic; }
+        var service = _services.Resolve(owner.Key.Pid, owner.Key, moduleName);
+        if (service != null) { return _tree.Decide(owner.Key, _observedSince, service); }
+        // A Service branch may precede a matching Process branch. Without the
+        // endpoint service name, even a process match cannot establish rule order.
+        return new(RouteDecisionKind.Unresolved, owner.Key, ServicePending: true);
+    }
+
+    public RouteDecision At(int pid, long timestamp, string? moduleName = null) =>
+        OwnerAt(pid, timestamp) is { } owner ? Decide(owner, moduleName) : RouteDecision.Unresolved;
+
+    public RouteDecision Current(int pid, string? moduleName = null) => _byPid.TryGetValue(pid, out var owners) && owners[0].Exited == null
+        ? Decide(owners[0], moduleName) : RouteDecision.Unresolved;
 }

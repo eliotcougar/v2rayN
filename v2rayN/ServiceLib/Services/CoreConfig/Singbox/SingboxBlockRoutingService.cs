@@ -55,6 +55,8 @@ public partial class CoreConfigSingboxService
                 case RoutingSelector.Process:
                     condition = Combine("or", values.Select(value => ProcessCondition(value, windows)).ToList());
                     break;
+                // Service identity exists only in the WinDivert attribution path.
+                case RoutingSelector.Service: return null;
                 case RoutingSelector.WindowsApp:
                     var roots = packages.Resolve(values);
                     if (roots.Count == 0) { return null; }

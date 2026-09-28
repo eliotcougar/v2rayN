@@ -5432,6 +5432,12 @@ namespace ServiceLib.Resx {
         public static string AppRoutingPackageImportResult => ResourceManager.GetString("AppRoutingPackageImportResult", resourceCulture);
         public static string AppRoutingSelectVisible => ResourceManager.GetString("AppRoutingSelectVisible", resourceCulture);
         public static string AppRoutingClearVisible => ResourceManager.GetString("AppRoutingClearVisible", resourceCulture);
+        public static string AppRoutingChooseServices => ResourceManager.GetString("AppRoutingChooseServices", resourceCulture);
+        public static string AppRoutingServiceHelp => ResourceManager.GetString("AppRoutingServiceHelp", resourceCulture);
+        public static string AppRoutingServiceSearch => ResourceManager.GetString("AppRoutingServiceSearch", resourceCulture);
+        public static string AppRoutingLoadingServices => ResourceManager.GetString("AppRoutingLoadingServices", resourceCulture);
+        public static string AppRoutingServicesSelected => ResourceManager.GetString("AppRoutingServicesSelected", resourceCulture);
+        public static string AppRoutingServiceUnavailable => ResourceManager.GetString("AppRoutingServiceUnavailable", resourceCulture);
         public static string RoutingBlocksTitle => ResourceManager.GetString("RoutingBlocksTitle", resourceCulture);
         public static string RoutingBlocksEdit => ResourceManager.GetString("RoutingBlocksEdit", resourceCulture);
         public static string RoutingBlocksCompatibility => ResourceManager.GetString("RoutingBlocksCompatibility", resourceCulture);
@@ -5448,10 +5454,13 @@ namespace ServiceLib.Resx {
         public static string RoutingBlocksIpHint => ResourceManager.GetString("RoutingBlocksIpHint", resourceCulture);
         public static string RoutingBlocksPortHint => ResourceManager.GetString("RoutingBlocksPortHint", resourceCulture);
         public static string RoutingBlocksProcessHint => ResourceManager.GetString("RoutingBlocksProcessHint", resourceCulture);
+        public static string RoutingBlocksServiceHint => ResourceManager.GetString("RoutingBlocksServiceHint", resourceCulture);
         public static string RoutingBlocksPackageHint => ResourceManager.GetString("RoutingBlocksPackageHint", resourceCulture);
         public static string RoutingBlocksInboundHint => ResourceManager.GetString("RoutingBlocksInboundHint", resourceCulture);
         public static string RoutingBlocksValuesHint => ResourceManager.GetString("RoutingBlocksValuesHint", resourceCulture);
         public static string RoutingBlocksProcess => ResourceManager.GetString("RoutingBlocksProcess", resourceCulture);
+        public static string RoutingBlocksService => ResourceManager.GetString("RoutingBlocksService", resourceCulture);
+        public static string RoutingBlocksAddService => ResourceManager.GetString("RoutingBlocksAddService", resourceCulture);
         public static string RoutingBlocksWindowsApp => ResourceManager.GetString("RoutingBlocksWindowsApp", resourceCulture);
         public static string RoutingBlocksInboundTag => ResourceManager.GetString("RoutingBlocksInboundTag", resourceCulture);
         public static string RoutingBlocksNetwork => ResourceManager.GetString("RoutingBlocksNetwork", resourceCulture);

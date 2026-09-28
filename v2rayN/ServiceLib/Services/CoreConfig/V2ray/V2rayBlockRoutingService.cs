@@ -30,6 +30,8 @@ public partial class CoreConfigV2rayService
                 case RoutingSelector.IP: rule.ip = values; break;
                 case RoutingSelector.Port: rule.port = string.Join(',', values); break;
                 case RoutingSelector.Process: rule.process = values; break;
+                // Service identity exists only in the WinDivert attribution path.
+                case RoutingSelector.Service: return null;
                 case RoutingSelector.Protocol: rule.protocol = values; break;
                 case RoutingSelector.InboundTag: rule.inboundTag = values; break;
                 case RoutingSelector.Network: rule.network = string.Join(',', values); break;

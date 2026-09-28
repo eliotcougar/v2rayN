@@ -50,8 +50,13 @@ internal static class RoutingBlockRules
     private static bool ValidFilter(RoutingFilter filter)
     {
         if (!Enum.IsDefined(filter.Selector)) { return false; }
-        if (filter.Applications == null) { return filter.Values.Count > 0 && !filter.Values.Any(string.IsNullOrWhiteSpace); }
-        return filter.Selector is RoutingSelector.Process or RoutingSelector.WindowsApp && filter.Applications.Count > 0
+        if (filter.Applications == null)
+        {
+            return filter.Values.Count > 0 && filter.Values.All(value => filter.Selector == RoutingSelector.Service
+                ? ValidServiceName(RoutingApplicationRow.FromValue(value, filter.Selector).MatchValue(filter.Selector))
+                : !string.IsNullOrWhiteSpace(value));
+        }
+        return filter.Selector is RoutingSelector.Process or RoutingSelector.WindowsApp or RoutingSelector.Service && filter.Applications.Count > 0
             && filter.Applications.All(row => ValidApplication(row, filter.Selector));
     }
 
@@ -60,6 +65,8 @@ internal static class RoutingBlockRules
         if (!Enum.IsDefined(row.Mode) || string.IsNullOrWhiteSpace(row.Value)) { return false; }
         var value = row.MatchValue(selector);
         if (value.Length == 0) { return false; }
+        if (selector == RoutingSelector.Service)
+        { return row.Mode == RoutingProcessMode.Name && !row.IncludeChildren && ValidServiceName(value); }
         if (selector == RoutingSelector.WindowsApp || row.Mode == RoutingProcessMode.Name) { return true; }
         if (value is "self/" or "xray/") { return true; }
         var absolute = value.StartsWith('/') || value.Length > 2 && char.IsLetter(value[0]) && value[1] == ':' && value[2] == '/';
@@ -77,7 +84,7 @@ internal static class RoutingBlockRules
         rule.Blocks?.Filters is { Count: 1 } filters && filters[0].Selector == RoutingSelector.Domain;
 
     public static bool IsMatch(RoutingSelector selector) => selector is
-        RoutingSelector.Domain or RoutingSelector.IP or RoutingSelector.Process or RoutingSelector.WindowsApp;
+        RoutingSelector.Domain or RoutingSelector.IP or RoutingSelector.Process or RoutingSelector.WindowsApp or RoutingSelector.Service;
 
     // Match selectors are alternatives; common constraints apply to every alternative.
     public static List<List<RoutingFilter>> Conjunctions(RoutingRuleBlocks blocks)
@@ -122,6 +129,9 @@ internal static class RoutingBlockRules
             RuleType = rule.RuleType,
         };
     }
+
+    private static bool ValidServiceName(string value) => value.Length is > 0 and <= 256
+        && !value.Any(c => c is '/' or '\\' || char.IsControl(c));
 
     internal static RoutingRuleBlocks FromLegacy(RulesItem rule)
     {

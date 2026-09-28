@@ -2,11 +2,11 @@
 
 ## Editing rules
 
-The main routing rule editor uses blocks added with `+`. Domain, IP, Process and
-Windows App are alternatives joined by OR. Port, Protocol, Inbound Tag and Network
+The main routing rule editor uses blocks added with `+`. Domain, IP, Process,
+Windows App and Service are alternatives joined by OR. Port, Protocol, Inbound Tag and Network
 are common AND constraints. Values within each block are alternatives:
 
-`(Domain OR IP OR Process OR Windows App) AND Port AND Protocol AND Inbound Tag AND Network`
+`(Domain OR IP OR Process OR Windows App OR Service) AND Port AND Protocol AND Inbound Tag AND Network`
 
 There are no operator switches. A rule may contain only common constraints.
 Domain and IP lines starting with `#` are comments; commenting every line makes
@@ -32,6 +32,19 @@ Clicking the name heading toggles alphabetical order; package row order has no
 routing significance. Family identifiers remain visible in tooltips and are the
 only identities saved for matching. Name lookup runs off the UI thread.
 
+Service blocks contain editable rows like Process blocks, with enable, move and
+delete controls. **Choose services** opens a searchable checklist of installed
+Windows services, including stopped services. Search matches both the display
+name and service name; selections hidden by the search stay selected. Previously
+selected services missing on this machine remain visible and editable. The rule
+saves the stable **service name** shown by `sc.exe query` (for example `Dnscache`),
+not its display name or `svchost.exe`. **Add service name** allows manual entry.
+The Children flag does not apply. The editor shows installed display names in
+tooltips when available. A service rule selects the service's own connections,
+including requests that another application delegates to it; it does not try to
+identify which application initiated each request. All traffic owned by that
+service is eligible when its rule matches.
+
 Disabled rows remain in the saved rule. If every row is disabled, that block
 matches nothing. Row order is for organization: enabled rows within one block
 have the same destination. Main routing table order determines rule precedence.
@@ -49,7 +62,7 @@ have been removed; their retired preview rules are discarded when loading the
 configuration. The monitored-interface selection remains available: it controls
 where capture applies, rather than choosing a destination adapter.
 
-Enable Application routing in Settings → v2rayN settings to capture selected processes/packages with WinDivert.
+Enable Application routing in Settings → v2rayN settings to capture selected processes, packages and services with WinDivert.
 Administrator privileges are required. Restart the routed application after
 changing its selection. The main routing table is the sole source of rules;
 the standalone window and its saved preview rules have been retired. Without
@@ -93,13 +106,15 @@ rules. Application rows project only their enabled effective values. Package
 families resolve once per configuration to installation-folder prefixes for
 native core matching. No package executable scan or process/package intersection
 is needed. Missing packages remove only their own alternative.
+Service alternatives compile only into the WinDivert shared-core projection;
+ordinary Xray and sing-box connections cannot infer a Windows service name.
 Process names preserve case for platforms with case-sensitive executable names;
 Windows identity matching remains case-insensitive.
 
 This native folder approximation identifies binaries installed in a package.
 WinDivert instead uses the process's Windows package identity, including sparse
 packages. Neither path can attribute work delegated to an unrelated Windows
-service to its initiating app. The package picker does not change loopback
+service to its initiating app. A Service rule selects the service itself. The package picker does not change loopback
 exemptions. Native package paths are refreshed on core reload.
 
 For type ALL, the Domain alternative also contributes to DNS generation, as in

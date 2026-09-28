@@ -97,6 +97,40 @@ public partial class RoutingBlockTests
     }
 
     [Test]
+    public async Task ServicePickerCommitsShortNamesAndPreservesDisabledRows()
+    {
+        var source = Rule((RoutingSelector.Service, ["Dnscache", "MissingSvc"]));
+        var editor = new RoutingRuleBlocksViewModel(source);
+        var filter = editor.Filters.Single();
+        filter.Applications.Single(row => row.Value == "Dnscache").Enabled = false;
+        var before = JsonUtils.Serialize(source);
+        filter.SetServices(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dnscache"] = "DNS Client",
+            ["OtherSvc"] = "Other Service",
+        });
+        await filter.Applications.Select(row => row.Value).Should().BeEquivalentTo(["Dnscache", "OtherSvc"]);
+        await filter.Applications.Single(row => row.Value == "Dnscache").Enabled.Should().BeFalse();
+        await filter.Applications.Single(row => row.Value == "Dnscache").DisplayName.Should().BeEqualTo("DNS Client");
+        await JsonUtils.Serialize(source).Should().BeEqualTo(before);
+        await editor.TrySave().Should().BeTrue();
+        await source.Blocks!.Filters[0].Applications!.Select(row => row.Value).Should().BeEquivalentTo(["Dnscache", "OtherSvc"]);
+        await source.Blocks.Filters[0].Applications!.Single(row => row.Value == "Dnscache").Enabled.Should().BeFalse();
+    }
+
+    [Test]
+    public async Task CancelledServicePickerLeavesExistingRowsUntouched()
+    {
+        var source = Rule((RoutingSelector.Service, ["Dnscache"]));
+        var editor = new RoutingRuleBlocksViewModel(source);
+        var original = JsonUtils.Serialize(source);
+        using var handler = editor.PickServices.RegisterHandler(interaction => interaction.SetOutput(false));
+        await editor.Filters.Single().ChooseServicesCmd.Execute().ToTask();
+        await editor.Filters.Single().Applications.Single().Value.Should().BeEqualTo("Dnscache");
+        await JsonUtils.Serialize(source).Should().BeEqualTo(original);
+    }
+
+    [Test]
     public async Task CommentedDomainAndIpRowsAreIgnoredIncludingAllCommentedBlocks()
     {
         var rule = Rule((RoutingSelector.Domain, ["# disabled.example"]),

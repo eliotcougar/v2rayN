@@ -73,10 +73,10 @@
                                     <ColumnDefinition Width="32" /><ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="88" /><ColumnDefinition Width="104" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="1" Text="{Binding Title}" Visibility="{Binding IsProcess, Converter={StaticResource BoolVisibility}}" />
+                                <TextBlock Grid.Column="1" Text="{Binding Title}" Visibility="{Binding IsEditable, Converter={StaticResource BoolVisibility}}" />
                                 <Button Grid.Column="1" Content="{Binding PackageSortHeading}" Command="{Binding SortPackagesCmd}"
                                     Visibility="{Binding IsPackages, Converter={StaticResource BoolVisibility}}" HorizontalAlignment="Left" Padding="0" Background="Transparent" BorderThickness="0" />
-                                <TextBlock Grid.Column="2" Text="{x:Static resx:ResUI.AppRoutingChildrenColumn}" ToolTip="{Binding Hint}" />
+                                <TextBlock Grid.Column="2" Text="{x:Static resx:ResUI.AppRoutingChildrenColumn}" Visibility="{Binding HasChildren, Converter={StaticResource BoolVisibility}}" ToolTip="{Binding Hint}" />
                             </Grid>
                             <ItemsControl ItemsSource="{Binding Applications}">
                                 <ItemsControl.ItemTemplate>
@@ -87,13 +87,13 @@
                                                 <ColumnDefinition Width="88" /><ColumnDefinition Width="104" />
                                             </Grid.ColumnDefinitions>
                                             <CheckBox IsChecked="{Binding Enabled, Mode=TwoWay}" VerticalAlignment="Center" AutomationProperties.Name="{x:Static resx:ResUI.LvEnabled}" />
-                                            <TextBox Grid.Column="1" Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Visibility="{Binding IsProcess, Converter={StaticResource BoolVisibility}}" Margin="0,0,8,0" ToolTip="{Binding Value}" />
+                                            <TextBox Grid.Column="1" Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Visibility="{Binding IsEditable, Converter={StaticResource BoolVisibility}}" Margin="0,0,8,0" ToolTip="{Binding DisplayName}" />
                                             <TextBlock Grid.Column="1" Text="{Binding DisplayName}" Visibility="{Binding IsPackage, Converter={StaticResource BoolVisibility}}" Margin="0,0,8,0"
                                                 VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Value}" />
-                                            <CheckBox Grid.Column="2" IsChecked="{Binding IncludeChildren, Mode=TwoWay}" VerticalAlignment="Center" AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingChildrenColumn}" />
+                                            <CheckBox Grid.Column="2" IsChecked="{Binding IncludeChildren, Mode=TwoWay}" Visibility="{Binding HasChildren, Converter={StaticResource BoolVisibility}}" VerticalAlignment="Center" AutomationProperties.Name="{x:Static resx:ResUI.AppRoutingChildrenColumn}" />
                                             <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-                                                <Button Content="↑" Command="{Binding UpCmd}" Visibility="{Binding IsProcess, Converter={StaticResource BoolVisibility}}" Padding="6,2" AutomationProperties.Name="{x:Static resx:ResUI.RoutingBlocksMoveUp}" />
-                                                <Button Content="↓" Command="{Binding DownCmd}" Visibility="{Binding IsProcess, Converter={StaticResource BoolVisibility}}" Padding="6,2" AutomationProperties.Name="{x:Static resx:ResUI.RoutingBlocksMoveDown}" />
+                                                <Button Content="↑" Command="{Binding UpCmd}" Visibility="{Binding IsEditable, Converter={StaticResource BoolVisibility}}" Padding="6,2" AutomationProperties.Name="{x:Static resx:ResUI.RoutingBlocksMoveUp}" />
+                                                <Button Content="↓" Command="{Binding DownCmd}" Visibility="{Binding IsEditable, Converter={StaticResource BoolVisibility}}" Padding="6,2" AutomationProperties.Name="{x:Static resx:ResUI.RoutingBlocksMoveDown}" />
                                                 <Button Content="×" Command="{Binding DeleteCmd}" Padding="6,2" AutomationProperties.Name="{x:Static resx:ResUI.RoutingBlocksRemove}" />
                                             </StackPanel>
                                         </Grid>
@@ -107,6 +107,11 @@
                                 <Button Content="{x:Static resx:ResUI.RoutingBlocksFullPath}" Command="{Binding AddFullPathCmd}" Padding="12,4" Margin="0,0,8,0" />
                                 <Button Content="{x:Static resx:ResUI.RoutingBlocksFolder}" Command="{Binding AddFolderCmd}" Padding="12,4" Margin="0,0,8,0" />
                                 <Button Content="{x:Static resx:ResUI.RoutingBlocksExecutable}" Command="{Binding ChooseCmd}" IsEnabled="{Binding CanPickPackages}" Padding="12,4" />
+                            </WrapPanel>
+                            <WrapPanel Visibility="{Binding IsService, Converter={StaticResource BoolVisibility}}" Margin="0,8,0,0">
+                                <Button Content="{x:Static resx:ResUI.AppRoutingChooseServices}" Command="{Binding ChooseServicesCmd}"
+                                    IsEnabled="{Binding CanPickServices}" Padding="12,4" Margin="0,0,8,0" />
+                                <Button Content="{x:Static resx:ResUI.RoutingBlocksAddService}" Command="{Binding AddServiceCmd}" Padding="12,4" />
                             </WrapPanel>
                         </StackPanel>
                     </StackPanel>

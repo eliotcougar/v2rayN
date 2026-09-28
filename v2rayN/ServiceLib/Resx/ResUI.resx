@@ -2043,6 +2043,9 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>Use a full path, a folder ending in /, or a filename. Children applies to WinDivert routing.</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>Enter Windows service short names, such as Dnscache. All traffic owned by a selected service follows this rule; the requesting app is not identified.</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>Enabled apps are alternatives. Children applies to WinDivert. Click the name heading to sort.</value>
   </data>
@@ -2054,6 +2057,12 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Process</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>Service</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>Add service name</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Windows App</value>
@@ -2087,5 +2096,23 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>Move down</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>Choose services</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>Select Windows services by name. All traffic owned by each selected service follows its rule, including requests delegated by other apps. The requesting app is not identified.</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>Search by service name or display name</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>Reading Windows services…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>Services: {0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>Not installed</value>
   </data>
 </root>

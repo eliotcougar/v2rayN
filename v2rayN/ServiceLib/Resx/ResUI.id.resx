@@ -1884,6 +1884,9 @@ Tindakan "Ambil sertifikat" mungkin gagal jika sertifikat self-signed digunakan 
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>Gunakan jalur lengkap, folder yang diakhiri /, atau nama berkas. Proses anak berlaku untuk perutean WinDivert.</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>Masukkan nama pendek layanan Windows, misalnya Dnscache. Semua lalu lintas milik layanan yang dipilih mengikuti aturan ini; aplikasi peminta tidak diidentifikasi.</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>Aplikasi aktif adalah alternatif. Proses anak berlaku untuk WinDivert. Klik judul kolom nama untuk mengurutkan.</value>
   </data>
@@ -1895,6 +1898,12 @@ Tindakan "Ambil sertifikat" mungkin gagal jika sertifikat self-signed digunakan 
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Process</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>Layanan</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>Tambah nama layanan</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Windows App</value>
@@ -1928,5 +1937,23 @@ Tindakan "Ambil sertifikat" mungkin gagal jika sertifikat self-signed digunakan 
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>Turun</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>Pilih layanan</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>Pilih layanan Windows berdasarkan nama. Semua lalu lintas milik layanan terpilih mengikuti aturannya, termasuk permintaan yang didelegasikan oleh aplikasi lain. Aplikasi peminta tidak diidentifikasi.</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>Cari nama layanan atau nama tampilan</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>Membaca layanan Windows…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>Layanan: {0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>Tidak terpasang</value>
   </data>
 </root>

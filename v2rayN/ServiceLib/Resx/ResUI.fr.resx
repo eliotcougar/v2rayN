@@ -1857,6 +1857,9 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>Utilisez un chemin complet, un dossier se terminant par / ou un nom de fichier. Enfants concerne le routage WinDivert.</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>Saisissez le nom court du service Windows, par exemple Dnscache. Tout le trafic de ce service suit cette règle ; l’application à l’origine de la demande n’est pas identifiée.</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>Les applications activées sont des alternatives. Les processus enfants concernent WinDivert. Cliquez sur le titre de la colonne des noms pour trier.</value>
   </data>
@@ -1868,6 +1871,12 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Process</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>Service</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>Ajouter un nom de service</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Windows App</value>
@@ -1901,5 +1910,23 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>Descendre</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>Choisir des services</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>Sélectionnez les services Windows par nom. Tout le trafic d’un service sélectionné suit sa règle, y compris les requêtes déléguées par d’autres applications. L’application à l’origine de la requête n’est pas identifiée.</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>Rechercher par nom de service ou nom affiché</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>Lecture des services Windows…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>Services : {0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>Non installé</value>
   </data>
 </root>

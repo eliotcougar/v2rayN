@@ -1989,6 +1989,9 @@ Təyin edildikdə sertifikat sabitlənəcək və "Təhlükəsiz olmayan əlaqəy
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>Tam yol, sonunda / olan qovluq və ya fayl adı daxil edin. Alt proseslər WinDivert marşrutlaşdırmasına aiddir.</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>Windows xidmətinin qısa adını daxil edin (məsələn, Dnscache). Seçilmiş xidmətə məxsus bütün trafik bu qaydaya uyğun yönləndirilir; sorğu göndərən tətbiq müəyyən edilmir.</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>Aktiv tətbiqlər alternativdir. Uşaq proseslər WinDivert üçündür. Sıralamaq üçün ad sütununun başlığına klikləyin.</value>
   </data>
@@ -2000,6 +2003,12 @@ Təyin edildikdə sertifikat sabitlənəcək və "Təhlükəsiz olmayan əlaqəy
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Process</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>Xidmət</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>Xidmət adı əlavə et</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Windows App</value>
@@ -2033,5 +2042,23 @@ Təyin edildikdə sertifikat sabitlənəcək və "Təhlükəsiz olmayan əlaqəy
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>Aşağı</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>Xidmətləri seçin</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>Windows xidmətlərini adına görə seçin. Seçilmiş xidmətə məxsus bütün trafik, digər tətbiqlərin ötürdüyü sorğular da daxil olmaqla, onun qaydasına uyğun yönləndirilir. Sorğunu başladan tətbiq müəyyən edilmir.</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>Xidmət adına və ya göstərilən ada görə axtarın</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>Windows xidmətləri oxunur…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>Xidmətlər: {0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>Quraşdırılmayıb</value>
   </data>
 </root>

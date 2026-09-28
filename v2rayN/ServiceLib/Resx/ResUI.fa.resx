@@ -1863,6 +1863,9 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>مسیر کامل، پوشه با / در انتها یا نام فایل وارد کنید. فرایندهای فرزند برای مسیریابی WinDivert هستند.</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>نام کوتاه سرویس ویندوز، مانند Dnscache، را وارد کنید. تمام ترافیک متعلق به سرویس انتخاب‌شده از این قانون پیروی می‌کند؛ برنامهٔ درخواست‌کننده شناسایی نمی‌شود.</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>برنامه‌های فعال با «یا» ترکیب می‌شوند. فرایندهای فرزند برای WinDivert هستند. برای مرتب‌سازی روی عنوان ستون نام کلیک کنید.</value>
   </data>
@@ -1874,6 +1877,12 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Process</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>سرویس</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>افزودن نام سرویس</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Windows App</value>
@@ -1907,5 +1916,23 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>پایین</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>انتخاب سرویس‌ها</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>سرویس‌های ویندوز را بر اساس نام انتخاب کنید. تمام ترافیک متعلق به سرویس انتخاب‌شده، از جمله درخواست‌های واگذارشده توسط برنامه‌های دیگر، از قانون آن پیروی می‌کند. برنامهٔ درخواست‌کننده شناسایی نمی‌شود.</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>جستجو بر اساس نام سرویس یا نام نمایشی</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>در حال خواندن سرویس‌های ویندوز…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>سرویس‌ها: {0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>نصب نشده است</value>
   </data>
 </root>

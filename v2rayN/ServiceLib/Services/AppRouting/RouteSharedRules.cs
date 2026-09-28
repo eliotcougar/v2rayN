@@ -44,7 +44,7 @@ internal sealed class RouteSharedRules
         Projection = new() { DomainStrategy = routing?.DomainStrategy!, RuleSet = JsonUtils.Serialize(projected) };
     }
 
-    internal static bool IsApplication(RoutingFilter filter) => filter.Selector is RoutingSelector.Process or RoutingSelector.WindowsApp;
+    internal static bool IsApplication(RoutingFilter filter) => filter.Selector is RoutingSelector.Process or RoutingSelector.WindowsApp or RoutingSelector.Service;
 
 }
 
@@ -56,6 +56,11 @@ internal sealed class RouteSharedPolicy(RouteSharedRules rules, Func<IReadOnlyLi
     private readonly RoutingFilter[] _filters = rules.Branches.Where(b => b.AcceptsInbound).SelectMany(b => b.Applications).Distinct().ToArray();
     public bool HasPackages => _filters.Any(f => f.Selector == RoutingSelector.WindowsApp && Rows(f).Any());
     public bool PackagesIncludeChildren => _filters.Any(f => f.Selector == RoutingSelector.WindowsApp && Rows(f).Any(r => r.IncludeChildren));
+    public IReadOnlySet<string> ServiceNames { get; } = rules.Branches.Where(b => b.AcceptsInbound).SelectMany(b => b.Applications)
+        .Where(f => f.Selector == RoutingSelector.Service)
+        .SelectMany(f => Rows(f).Select(r => r.MatchValue(RoutingSelector.Service)))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    public bool HasServices => ServiceNames.Count != 0;
 
     private static IEnumerable<RoutingApplicationRow> Rows(RoutingFilter filter) =>
         (filter.Applications ?? filter.Values.Select(v => RoutingApplicationRow.FromValue(v, filter.Selector)).ToList()).Where(r => r.Enabled);
@@ -64,8 +69,11 @@ internal sealed class RouteSharedPolicy(RouteSharedRules rules, Func<IReadOnlyLi
         (!ancestor || r.IncludeChildren) && (r.Mode == RoutingProcessMode.Folder || r.Mode == RoutingProcessMode.FullPath &&
         string.Equals(Path.GetFileName(r.Value), name, StringComparison.OrdinalIgnoreCase))));
 
-    internal static bool Matches(RoutingFilter filter, IReadOnlyList<RouteProcessInfo> lineage) => Rows(filter).Any(row =>
-        lineage.Where((_, index) => index == 0 || row.IncludeChildren).Any(process => Matches(row, filter.Selector, process)));
+    internal static bool Matches(RoutingFilter filter, IReadOnlyList<RouteProcessInfo> lineage, string? serviceName = null) =>
+        filter.Selector == RoutingSelector.Service
+            ? serviceName != null && Rows(filter).Any(row => string.Equals(row.MatchValue(RoutingSelector.Service), serviceName, StringComparison.OrdinalIgnoreCase))
+            : Rows(filter).Any(row => lineage.Where((_, index) => index == 0 || row.IncludeChildren)
+                .Any(process => Matches(row, filter.Selector, process)));
 
     private static bool Matches(RoutingApplicationRow row, RoutingSelector selector, RouteProcessInfo process)
     {
@@ -80,9 +88,9 @@ internal sealed class RouteSharedPolicy(RouteSharedRules rules, Func<IReadOnlyLi
         };
     }
 
-    public RouteTarget? Select(IReadOnlyList<RouteProcessInfo> lineage)
+    public RouteTarget? Select(IReadOnlyList<RouteProcessInfo> lineage, string? serviceName = null)
     {
-        var matches = _filters.ToDictionary(f => f, f => Matches(f, lineage));
+        var matches = _filters.ToDictionary(f => f, f => Matches(f, lineage, serviceName));
         var onlyPorts = !matches.Values.Any(v => v);
         if (onlyPorts && rules.Ports == null) { return null; }
         var markers = rules.Branches.Where(b => b.AcceptsInbound && b.Applications.All(f => matches[f])).Select(b => b.Marker).ToArray();

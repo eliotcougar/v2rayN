@@ -3,8 +3,8 @@
 This feature adds an **Application routing** switch and **Monitored interfaces**
 button to **Settings → v2rayN settings**, immediately after **Double-clicking
 configuration makes it active**, in both WPF and Avalonia. All rules live in the
-ordinary routing table's [block editor](routing-block-editor.md). Process and
-Windows App blocks select applications; standalone Port rules, optionally with
+ordinary routing table's [block editor](routing-block-editor.md). Process,
+Windows App and Service blocks select identities; standalone Port rules, optionally with
 Network, select destination ports across applications. Full port ranges remain
 fallback rules and never opt every application into capture.
 
@@ -28,10 +28,12 @@ of working process interception or absence of traffic leaks.
 3. Use **Monitored interfaces** to select adapters and the default for newly seen
    adapters. Confirming this separate dialog saves and applies its choices
    immediately, without committing an unfinished enable-switch change.
-4. Edit rules in **Routing settings**. Add Process or Windows App blocks, or a
+4. Edit rules in **Routing settings**. Add Process, Windows App or Service blocks, or a
    standalone Port block with optional Network. Process offers Full path, Folder,
-   and Executable picker buttons. Windows App offers a package checklist. Enable
-   and Children flags are editable in those blocks. Rule precedence is table order.
+   and Executable picker buttons. Windows App offers a package checklist. Service
+   rows use a searchable service checklist or accept a Windows service name such
+   as `Dnscache` directly. Enable flags are editable;
+   Children applies only to Process and Windows App. Rule precedence is table order.
 5. Saving a routing set, changing its selection or changing routing options now
    requests a core reload immediately, even while the routing list remains open.
    WinDivert applies the current saved policy at the start of that reload, before
@@ -210,8 +212,9 @@ main log panel instead of popup notifications; `guiLogs` retains diagnostics.
   normal Windows route. Attributed traffic has no direct fallback while its
   configured relay is active and failing.
 - Loopback traffic is excluded. Windows DNS requests made by a shared system
-  service cannot be attributed to the calling executable and retain their
-  normal route. Applications' own non-loopback DNS sockets follow their rules.
+  service cannot be attributed to the calling executable. They retain their
+  normal route unless a Service rule selects their endpoint's service identity.
+  Applications' own non-loopback DNS sockets follow their rules.
 - Process attribution uses Windows TCP/UDP owner tables. Shared UDP ports with
   multiple owners are ambiguous and blocked when an owner has a selected rule.
   A new TCP connection refreshes ownership before choosing its route. Initial
@@ -252,8 +255,16 @@ main log panel instead of popup notifications; `guiLogs` retains diagnostics.
   or maintenance-worker failure, or an unexpected isolated Xray exit, stops and
   cleans up the runtime and reports the error. There is no automatic retry loop;
   the saved enabled preference remains intact for the next launch.
-- ICMP, raw IP protocols, inbound servers, multicast/broadcast discovery and
-  shared-service traffic are outside the supported application-routing scope.
+- ICMP, raw IP protocols, inbound servers and multicast/broadcast discovery
+  are outside the supported application-routing scope. Service rules can select
+  a service with a dedicated process directly. For a process shared by several
+  services, the endpoint owner module must resolve to an exact service name.
+  Windows may instead report a process/component name or no name, so some shared
+  service endpoints remain unresolved; captured packets can be blocked after
+  the normal ownership retry rather than assigned to another service.
+  Service rules apply to all matching service-owned connections, including
+  delegated work, without identifying the requesting application. System/PID 4
+  traffic is excluded. Native shared-service interception remains unverified.
 - Both x64 and x86 Windows builds include application routing. The x86 build can
   run on 32-bit Windows or under WOW64 on x64 Windows. ARM64 interception is not
   provided. Linux/macOS retain their existing behavior and hide the menu item.

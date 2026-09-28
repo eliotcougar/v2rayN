@@ -4,7 +4,7 @@ namespace ServiceLib.Services.AppRouting;
 
 internal static class RouteOwnerTable
 {
-    internal sealed record Row(IPAddress Local, ushort Port, IPAddress? Remote, ushort RemotePort, int Pid);
+    internal sealed record Row(IPAddress Local, ushort Port, IPAddress? Remote, ushort RemotePort, int Pid, string? ModuleName = null);
 
     [SupportedOSPlatform("windows")]
     internal static List<Row> Read(byte protocol, AddressFamily family)

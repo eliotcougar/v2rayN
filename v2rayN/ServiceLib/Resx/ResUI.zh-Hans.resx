@@ -1981,6 +1981,9 @@
   <data name="RoutingBlocksProcessHint" xml:space="preserve">
     <value>输入完整路径、以 / 结尾的文件夹或文件名。子进程选项用于 WinDivert 路由。</value>
   </data>
+  <data name="RoutingBlocksServiceHint" xml:space="preserve">
+    <value>输入 Windows 服务短名称，例如 Dnscache。所选服务发起的所有流量都遵循此规则；无法识别请求该服务的应用。</value>
+  </data>
   <data name="RoutingBlocksPackageHint" xml:space="preserve">
     <value>已启用的应用按“或”匹配。子进程选项用于 WinDivert。点击名称列标题排序。</value>
   </data>
@@ -1992,6 +1995,12 @@
   </data>
   <data name="RoutingBlocksProcess" xml:space="preserve">
     <value>Process</value>
+  </data>
+  <data name="RoutingBlocksService" xml:space="preserve">
+    <value>服务</value>
+  </data>
+  <data name="RoutingBlocksAddService" xml:space="preserve">
+    <value>添加服务名称</value>
   </data>
   <data name="RoutingBlocksWindowsApp" xml:space="preserve">
     <value>Windows App</value>
@@ -2025,5 +2034,23 @@
   </data>
   <data name="RoutingBlocksMoveDown" xml:space="preserve">
     <value>下移</value>
+  </data>
+  <data name="AppRoutingChooseServices" xml:space="preserve">
+    <value>选择服务</value>
+  </data>
+  <data name="AppRoutingServiceHelp" xml:space="preserve">
+    <value>按名称选择 Windows 服务。所选服务的全部流量均遵循其规则，包括其他应用委托的请求；无法识别发起请求的应用。</value>
+  </data>
+  <data name="AppRoutingServiceSearch" xml:space="preserve">
+    <value>按服务名或显示名称搜索</value>
+  </data>
+  <data name="AppRoutingLoadingServices" xml:space="preserve">
+    <value>正在读取 Windows 服务…</value>
+  </data>
+  <data name="AppRoutingServicesSelected" xml:space="preserve">
+    <value>服务：{0}</value>
+  </data>
+  <data name="AppRoutingServiceUnavailable" xml:space="preserve">
+    <value>未安装</value>
   </data>
 </root>

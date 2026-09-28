@@ -43,6 +43,11 @@ public partial class RoutingRuleBlocksWindow : WindowBase<RoutingRuleBlocksViewM
                 var picker = new AppRoutingPackageWindow { ViewModel = interaction.Input, DataContext = interaction.Input };
                 interaction.SetOutput(await picker.ShowDialog<bool>(this));
             }).DisposeWith(disposables);
+            ViewModel.PickServices.RegisterHandler(async interaction =>
+            {
+                var picker = new AppRoutingServiceWindow { ViewModel = interaction.Input, DataContext = interaction.Input };
+                interaction.SetOutput(await picker.ShowDialog<bool>(this));
+            }).DisposeWith(disposables);
         });
     }
 

@@ -7,6 +7,7 @@ public partial class RoutingRuleBlocksViewModel : MyReactiveObject, ICloseable
     private readonly RulesItem _source;
     public event EventHandler? RequestClose;
     public Interaction<AppRoutingPackageViewModel, bool> PickPackages { get; } = new();
+    public Interaction<AppRoutingServiceViewModel, bool> PickServices { get; } = new();
     public ObservableCollection<RoutingFilterViewModel> Filters { get; } = [];
     public ObservableCollection<RoutingSelectorChoice> AvailableSelectors { get; } = [];
     public Interaction<AppRoutingProcessViewModel, bool> PickProcess { get; } = new();
@@ -51,15 +52,24 @@ public partial class RoutingRuleBlocksViewModel : MyReactiveObject, ICloseable
 
     public async Task Initialize()
     {
-        if (!OperatingSystem.IsWindows() || !Filters.Any(f => f.IsPackages)) { return; }
+        if (!OperatingSystem.IsWindows() || !Filters.Any(f => f.IsPackages || f.IsService)) { return; }
         try
         {
-            var packages = await Task.Run(() => OperatingSystem.IsWindows() ? RoutePackageCatalog.Read() : []);
-            var names = packages.ToDictionary(p => p.Family, p => p.Name, StringComparer.OrdinalIgnoreCase);
-            foreach (var block in Filters.Where(f => f.IsPackages)) { block.SetPackageNames(names); }
+            if (Filters.Any(f => f.IsPackages))
+            {
+                var packages = await Task.Run(RoutePackageCatalog.Read);
+                var names = packages.ToDictionary(p => p.Family, p => p.Name, StringComparer.OrdinalIgnoreCase);
+                foreach (var block in Filters.Where(f => f.IsPackages)) { block.SetPackageNames(names); }
+            }
+            if (Filters.Any(f => f.IsService))
+            {
+                var services = await Task.Run(RouteServiceCatalog.Read);
+                var names = services.ToDictionary(s => s.Name, s => s.DisplayName, StringComparer.OrdinalIgnoreCase);
+                foreach (var block in Filters.Where(f => f.IsService)) { block.SetServiceNames(names); }
+            }
         }
-        // Names are presentation only: unavailable/uninstalled packages remain editable by family ID.
-        catch (Exception ex) { Logging.SaveLog("Load routing package names", ex); }
+        // Display names are presentation only; saved service and package keys remain editable.
+        catch (Exception ex) { Logging.SaveLog("Load routing identity names", ex); }
     }
 
     internal void AddFilter(RoutingSelector selector, IEnumerable<string>? values = null, IEnumerable<RoutingApplicationRow>? applications = null)
@@ -73,6 +83,12 @@ public partial class RoutingRuleBlocksViewModel : MyReactiveObject, ICloseable
         });
         block.AddFullPathCmd = ReactiveCommand.CreateFromTask(() => AddProcessPath(block, RoutingProcessMode.FullPath));
         block.AddFolderCmd = ReactiveCommand.CreateFromTask(() => AddProcessPath(block, RoutingProcessMode.Folder));
+        block.AddServiceCmd = ReactiveCommand.Create(() => block.AddApplication(RoutingApplicationRow.FromValue("", RoutingSelector.Service)));
+        block.ChooseServicesCmd = ReactiveCommand.CreateFromTask(async () =>
+        {
+            using var picker = new AppRoutingServiceViewModel(block.Applications.Select(row => row.Value));
+            if (await PickServices.HandleSafe(picker)) { block.SetServices(picker.SelectedServiceNames()); }
+        });
         block.ChooseCmd = ReactiveCommand.CreateFromTask(async () =>
         {
             if (block.IsProcess)
@@ -169,17 +185,22 @@ public partial class RoutingFilterViewModel : MyReactiveObject
         RoutingSelector.IP => ResUI.RoutingBlocksIpHint,
         RoutingSelector.Port => ResUI.RoutingBlocksPortHint,
         RoutingSelector.Process => ResUI.RoutingBlocksProcessHint,
+        RoutingSelector.Service => ResUI.RoutingBlocksServiceHint,
         RoutingSelector.WindowsApp => ResUI.RoutingBlocksPackageHint,
         RoutingSelector.InboundTag => ResUI.RoutingBlocksInboundHint + " " + string.Join(", ", AvailableInbounds(AppManager.Instance.Config)),
         _ => ResUI.RoutingBlocksValuesHint,
     };
     public bool IsPackages => Selector == RoutingSelector.WindowsApp;
     public bool IsProcess => Selector == RoutingSelector.Process;
-    public bool IsApplications => IsProcess || IsPackages;
+    public bool IsService => Selector == RoutingSelector.Service;
+    public bool IsEditable => IsProcess || IsService;
+    public bool HasChildren => !IsService;
+    public bool IsApplications => IsProcess || IsPackages || IsService;
     public bool IsText => !IsChoices && !IsApplications;
     public ObservableCollection<RoutingApplicationRowViewModel> Applications { get; } = [];
     public bool IsChoices => Selector is RoutingSelector.Protocol or RoutingSelector.Network;
     public bool CanPickPackages => OperatingSystem.IsWindows();
+    public bool CanPickServices => OperatingSystem.IsWindows();
     public ObservableCollection<RoutingFilterChoice> Choices { get; } = [];
     [Reactive] public partial string Text { get; set; } = "";
     [Reactive] public partial bool ShowAnd { get; set; }
@@ -190,6 +211,8 @@ public partial class RoutingFilterViewModel : MyReactiveObject
     public ReactiveCommand<RxVoid, RxVoid> ChooseCmd { get; internal set; } = null!;
     public ReactiveCommand<RxVoid, RxVoid> AddFullPathCmd { get; internal set; } = null!;
     public ReactiveCommand<RxVoid, RxVoid> AddFolderCmd { get; internal set; } = null!;
+    public ReactiveCommand<RxVoid, RxVoid> AddServiceCmd { get; internal set; } = null!;
+    public ReactiveCommand<RxVoid, RxVoid> ChooseServicesCmd { get; internal set; } = null!;
 
     public RoutingFilterViewModel(RoutingSelector selector, IEnumerable<string> values, IEnumerable<RoutingApplicationRow>? applications = null)
     {
@@ -223,7 +246,7 @@ public partial class RoutingFilterViewModel : MyReactiveObject
 
     internal void AddApplication(RoutingApplicationRow model)
     {
-        var row = new RoutingApplicationRowViewModel(model, IsProcess);
+        var row = new RoutingApplicationRowViewModel(model, Selector);
         row.DeleteCmd = ReactiveCommand.Create(() => Applications.Remove(row));
         row.UpCmd = ReactiveCommand.Create(() => Move(row, -1));
         row.DownCmd = ReactiveCommand.Create(() => Move(row, 1));
@@ -253,6 +276,21 @@ public partial class RoutingFilterViewModel : MyReactiveObject
         SortPackages();
     }
 
+    internal void SetServiceNames(IReadOnlyDictionary<string, string> names)
+    {
+        foreach (var row in Applications)
+        { row.DisplayName = names.TryGetValue(row.Value, out var name) && !string.IsNullOrWhiteSpace(name) ? name : row.Value; }
+    }
+
+    internal void SetServices(IReadOnlyDictionary<string, string> names)
+    {
+        var selected = names.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Applications.Where(row => !selected.Contains(row.Value)).ToArray()) { Applications.Remove(row); }
+        selected.ExceptWith(Applications.Select(row => row.Value));
+        foreach (var name in selected) { AddApplication(RoutingApplicationRow.FromValue(name, RoutingSelector.Service)); }
+        SetServiceNames(names);
+    }
+
     private void SortPackages()
     {
         var sorted = Applications.OrderBy(row => row.DisplayName, StringComparer.CurrentCultureIgnoreCase)
@@ -278,6 +316,7 @@ public partial class RoutingFilterViewModel : MyReactiveObject
         RoutingSelector.IP => "IP",
         RoutingSelector.Port => ResUI.LvPort,
         RoutingSelector.Process => ResUI.RoutingBlocksProcess,
+        RoutingSelector.Service => ResUI.RoutingBlocksService,
         RoutingSelector.WindowsApp => ResUI.RoutingBlocksWindowsApp,
         RoutingSelector.Protocol => ResUI.RoutingBlocksProtocol,
         RoutingSelector.InboundTag => ResUI.RoutingBlocksInboundTag,
@@ -298,26 +337,30 @@ public partial class RoutingApplicationRowViewModel : MyReactiveObject
     [Reactive] public partial string Value { get; set; }
     [Reactive] public partial string DisplayName { get; set; }
     [Reactive] public partial bool IncludeChildren { get; set; }
-    public bool IsProcess { get; }
-    public bool IsPackage => !IsProcess;
+    public RoutingSelector Selector { get; }
+    public bool IsProcess => Selector == RoutingSelector.Process;
+    public bool IsService => Selector == RoutingSelector.Service;
+    public bool IsPackage => Selector == RoutingSelector.WindowsApp;
+    public bool IsEditable => IsProcess || IsService;
+    public bool HasChildren => !IsService;
     public ReactiveCommand<RxVoid, bool> DeleteCmd { get; internal set; } = null!;
     public ReactiveCommand<RxVoid, RxVoid> UpCmd { get; internal set; } = null!;
     public ReactiveCommand<RxVoid, RxVoid> DownCmd { get; internal set; } = null!;
 
-    public RoutingApplicationRowViewModel(RoutingApplicationRow row, bool isProcess)
+    public RoutingApplicationRowViewModel(RoutingApplicationRow row, RoutingSelector selector)
     {
         Enabled = row.Enabled;
         // Preserve older explicit modes by displaying the value they actually match.
-        Value = isProcess ? row.MatchValue(RoutingSelector.Process) : row.Value;
+        Value = selector == RoutingSelector.Process ? row.MatchValue(RoutingSelector.Process) : row.Value;
         DisplayName = Value;
-        IncludeChildren = row.IncludeChildren; IsProcess = isProcess;
+        IncludeChildren = row.IncludeChildren; Selector = selector;
     }
 
     public RoutingApplicationRow ToModel()
     {
-        var row = RoutingApplicationRow.FromValue(Value, IsProcess ? RoutingSelector.Process : RoutingSelector.WindowsApp);
+        var row = RoutingApplicationRow.FromValue(Value, Selector);
         row.Enabled = Enabled;
-        row.IncludeChildren = IncludeChildren;
+        row.IncludeChildren = HasChildren && IncludeChildren;
         return row;
     }
 }

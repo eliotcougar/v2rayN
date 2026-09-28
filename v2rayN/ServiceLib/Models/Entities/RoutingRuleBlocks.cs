@@ -3,7 +3,7 @@
 public enum RoutingSelector
 {
     // Persisted values: append new selectors without renumbering existing ones.
-    Domain = 0, IP = 1, Port = 2, Process = 3, WindowsApp = 4, Protocol = 5, InboundTag = 6, Network = 7
+    Domain = 0, IP = 1, Port = 2, Process = 3, WindowsApp = 4, Protocol = 5, InboundTag = 6, Network = 7, Service = 8
 }
 
 public sealed class RoutingFilter
@@ -18,7 +18,7 @@ public sealed class RoutingFilter
 
 public enum RoutingProcessMode { FullPath = 0, Folder = 1, Name = 2 }
 
-/// <summary>A process path, folder or name, or a stable Windows package family.</summary>
+/// <summary>A process path, folder or name, a package family, or a Windows service short name.</summary>
 public sealed class RoutingApplicationRow
 {
     public bool Enabled { get; set; } = true;
@@ -29,7 +29,7 @@ public sealed class RoutingApplicationRow
     public string MatchValue(RoutingSelector selector)
     {
         var value = Value.Trim().Trim('"').Replace('\\', '/');
-        if (selector == RoutingSelector.WindowsApp) { return value; }
+        if (selector is RoutingSelector.WindowsApp or RoutingSelector.Service) { return value; }
         return Mode switch
         {
             RoutingProcessMode.Name => value[(value.LastIndexOf('/') + 1)..],
@@ -46,6 +46,7 @@ public sealed class RoutingApplicationRow
         {
             Value = value,
             Mode = selector == RoutingSelector.WindowsApp ? RoutingProcessMode.FullPath
+                : selector == RoutingSelector.Service ? RoutingProcessMode.Name
                 : value.EndsWith('/') ? RoutingProcessMode.Folder
                 : value.Contains('/') ? RoutingProcessMode.FullPath : RoutingProcessMode.Name,
         };

@@ -34,6 +34,11 @@ public partial class RoutingRuleBlocksWindow
                 var picker = new AppRoutingPackageWindow { Owner = this, ViewModel = interaction.Input, DataContext = interaction.Input };
                 interaction.SetOutput(picker.ShowDialog() == true);
             }).DisposeWith(disposables);
+            ViewModel.PickServices.RegisterHandler(interaction =>
+            {
+                var picker = new AppRoutingServiceWindow { Owner = this, ViewModel = interaction.Input, DataContext = interaction.Input };
+                interaction.SetOutput(picker.ShowDialog() == true);
+            }).DisposeWith(disposables);
         });
         WindowsUtils.SetDarkBorder(this, AppManager.Instance.Config.UiItem.CurrentTheme);
     }
