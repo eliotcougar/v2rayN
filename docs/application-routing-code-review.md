@@ -302,6 +302,20 @@ The process exit task is exposed for supervision. Cleanup stops the owned proces
 closes its job, observes exit, disposes process resources and deletes its config.
 Runtime credentials never replace the user's saved profile choice.
 
+The usual identity handoff adds rules and private inbounds through Xray's API.
+GeoSite/GeoIP expansion can make the protobuf request exceed the server's 4 MiB
+receive limit even when the source JSON is small. `RouteCoreApi` distinguishes
+that rejection from other API failures: the server rejected it before dispatch,
+so there is no partial rule set to revoke. `RouteSharedProfile` then prepares a
+file-configured core for that combination, with the same internal DNS routes,
+ordered matching branches, final route and outbounds. It caches the endpoint
+and uses files for subsequent new combinations. Existing endpoints keep working.
+This trades additional core processes and memory for preserving native routing
+semantics, including individually oversized GeoSite and negated GeoIP rules.
+The aggregate profile observes every owned core's exit and disposes all of them
+on stop or replacement; startup failures use the same `RouteProfileInstance`
+cleanup as the shared core. The combination cache remains bounded to 256.
+
 Normal core reload regenerates the effective main-table plan. Its fingerprint
 includes native rules, capture eligibility, executable/package selectors, profile
 outbounds, core path and environment. Changed plans replace the shared core;

@@ -131,7 +131,7 @@ original all-port selection. Capture eligibility is included
 in branch metadata used for the shared-core reuse key, so adding another block
 cannot accidentally reuse a previous global port policy.
 
-`RouteSharedProfile` owns one additional supervised Xray core for the main table.
+`RouteSharedProfile` starts one additional supervised Xray core for the main table.
 At the first connection for a membership combination, it adds the applicable
 ordered native rules and an authenticated loopback SOCKS inbound through Xray's
 HandlerService and RoutingService APIs. Rules are installed before the listener;
@@ -142,10 +142,23 @@ The existing SOCKS TCP and multi-destination UDP transports remain in use.
 The packaged Xray executable supplies the API client (`api adrules`, `api adi`),
 so no separately maintained protobuf dependency is introduced. Two short helper
 processes run on first use; subsequent connections reuse the prepared endpoint.
-There is no per-packet API call. Failed setup revokes the scoped rules and inbound.
+There is no per-packet API call. Failed setup revokes any attempted scoped rules
+and inbound.
+
+Xray expands GeoSite/GeoIP expressions before sending the API request. If the
+expanded rules exceed the server's gRPC receive limit, no rules are committed.
+The resolver then loads the same ordered rules through a normal config file in
+an additional owned core for that match combination. Subsequent new combinations
+use this file path without retrying the oversized API request; existing endpoints
+remain usable. This also handles a single oversized GeoSite list and negated GeoIP
+expressions without splitting or changing their meaning. Each combination still
+shares one cached endpoint across processes, but large configurations can consume
+more memory and start more core processes. Every owned core is supervised; any
+unexpected exit stops application routing through the existing failure path.
+
 The cache is bounded to 256 observed combinations per configuration; exceeding
 it rejects new preparations with a diagnostic. All listeners disappear with the
-owned core on stop or configuration replacement.
+owned cores on stop or configuration replacement.
 
 `RouteRuntime` prepares the shared core and commits the observer policy only
 after it is ready. Old connections are retired when the effective configuration

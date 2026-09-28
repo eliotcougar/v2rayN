@@ -1,7 +1,7 @@
 ﻿namespace ServiceLib.Services.AppRouting;
 
-/// <summary>One supervised core for the main routing table. Each observed application-match
-/// combination receives a private authenticated inbound, keeping identity across the SOCKS relay.</summary>
+/// <summary>A shared core with private authenticated inbounds for application-match combinations.
+/// Rules too large for its API use file-configured cores with the same ownership and match cache.</summary>
 [SupportedOSPlatform("windows")]
 internal sealed class RouteSharedProfile : IRouteProfile
 {
@@ -11,14 +11,20 @@ internal sealed class RouteSharedProfile : IRouteProfile
     private readonly CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, RouteSocksEndpoint> _endpoints = [];
+    private readonly List<IRouteProfile> _fileCores = [];
+    private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Func<string, CancellationToken, Task<IRouteProfile>> _startCore;
+    private bool _useConfigFiles;
     public RouteSocksEndpoint Endpoint => _core.Endpoint;
     public int ProcessId => _core.ProcessId;
-    public Task Completion => _core.Completion;
+    public Task Completion => _completion.Task;
     public RouteSharedPolicy SharedPolicy { get; }
 
-    private RouteSharedProfile(IRouteProfile core, RouteSharedTemplate template, RouteCoreApi api, RouteSharedRules rules)
+    private RouteSharedProfile(IRouteProfile core, RouteSharedTemplate template, RouteCoreApi api, RouteSharedRules rules,
+        Func<string, CancellationToken, Task<IRouteProfile>> startCore)
     {
-        _core = core; _template = template; _api = api;
+        _core = core; _template = template; _api = api; _startCore = startCore;
+        Observe(core);
         SharedPolicy = new(rules, PrepareEndpoint);
     }
 
@@ -30,7 +36,8 @@ internal sealed class RouteSharedProfile : IRouteProfile
         template.Root["api"] = new JsonObject { ["tag"] = "app-routing-api", ["listen"] = $"127.0.0.1:{apiPort}",
             ["services"] = new JsonArray("HandlerService", "RoutingService") };
         var instance = await RouteProfileInstance.StartAsync(template.Root.ToJsonString(), core, environment, token);
-        return new RouteSharedProfile(instance, template, new(core, environment, apiPort), rules);
+        return new RouteSharedProfile(instance, template, new(core, environment, apiPort), rules,
+            (config, cancellation) => RouteProfileInstance.StartAsync(config, core, environment, cancellation));
     }
 
     internal static int ReservePort()
@@ -54,25 +61,42 @@ internal sealed class RouteSharedProfile : IRouteProfile
             if (_endpoints.Count >= 256) { throw new IOException("Too many distinct application-routing match combinations (256). Simplify overlapping child-process rules."); }
             if (Completion.IsCompleted) { throw new IOException("The shared application-routing core has stopped."); }
             var tag = "app-match-" + Guid.NewGuid().ToString("N");
+            if (_useConfigFiles) { return await PrepareFileCore(markers, tag, key, token); }
             var endpoint = new RouteSocksEndpoint(ReservePort(), "app-route", Convert.ToHexString(RandomNumberGenerator.GetBytes(24)));
             var nativeRules = _template.RulesFor(markers, tag);
             var inbound = RouteSharedTemplate.Inbound(tag, endpoint);
+            var inboundAttempted = false;
             try
             {
                 // No traffic can enter before the entire ordered rule set is installed.
                 await _api.Execute("adrules", new JsonObject { ["routing"] = new JsonObject { ["rules"] = nativeRules } }, token, "-append");
+                inboundAttempted = true;
                 await _api.Execute("adi", new JsonObject { ["inbounds"] = new JsonArray(inbound) }, token);
                 using var ready = await RouteConnector.ConnectProxy(endpoint, token);
                 _endpoints.Add(key, endpoint);
                 return endpoint;
+            }
+            catch (RouteRuleSizeException)
+            {
+                // gRPC rejected the request before dispatch: no rules or inbound were added.
+                // Load the original expressions through Xray's file loader, including oversized
+                // individual GeoSite lists and negated GeoIP sets that cannot safely be split.
+                _useConfigFiles = true;
+                var message = "Application routing: large routing tables will use a separate Xray core per match combination.";
+                Logging.SaveLog(message);
+                NoticeManager.Instance.SendMessage(message);
+                return await PrepareFileCore(markers, tag, key, token);
             }
             catch
             {
                 // The API may have committed before its client was cancelled. Revoke both
                 // independently, using a cleanup token, before allowing another attempt.
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                try { await _api.Execute("rmi", null, cleanup.Token, tag); }
-                catch (Exception ex) { Logging.SaveLog("AppRouting inbound cleanup", ex); }
+                if (inboundAttempted)
+                {
+                    try { await _api.Execute("rmi", null, cleanup.Token, tag); }
+                    catch (Exception ex) { Logging.SaveLog("AppRouting inbound cleanup", ex); }
+                }
                 try { await _api.Execute("rmrules", null, cleanup.Token, nativeRules.Select(r => r!["ruleTag"]!.GetValue<string>()).ToArray()); }
                 catch (Exception ex) { Logging.SaveLog("AppRouting rule cleanup", ex); }
                 throw;
@@ -81,11 +105,26 @@ internal sealed class RouteSharedProfile : IRouteProfile
         finally { _gate.Release(); }
     }
 
+    private async Task<RouteSocksEndpoint> PrepareFileCore(IReadOnlyList<string> markers, string tag, string key, CancellationToken token)
+    {
+        var core = await _startCore(_template.ConfigFor(markers, tag), token);
+        _fileCores.Add(core);
+        Observe(core);
+        _endpoints.Add(key, core.Endpoint);
+        return core.Endpoint;
+    }
+
+    private void Observe(IRouteProfile core) => _ = core.Completion.ContinueWith(task =>
+    {
+        if (task.Exception != null) { Logging.SaveLog("AppRouting core exit", task.Exception); }
+        _completion.TrySetResult();
+    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
     public async ValueTask DisposeAsync()
     {
         await _stop.CancelAsync();
         await _gate.WaitAsync();
-        try { await _core.DisposeAsync(); }
+        try { await Task.WhenAll(_fileCores.Prepend(_core).Select(async core => await core.DisposeAsync())); }
         finally { _gate.Release(); _stop.Dispose(); }
     }
 }
@@ -125,6 +164,16 @@ internal sealed class RouteSharedTemplate
             result[index]!["ruleTag"] = $"{inbound}-{index}";
         }
         return result;
+    }
+
+    internal string ConfigFor(IReadOnlyList<string> markers, string inbound)
+    {
+        var root = Root.DeepClone().AsObject();
+        root.Remove("api");
+        root["inbounds"] = new JsonArray(Inbound(inbound, new(10808, "app-route", "template")));
+        var rules = root["routing"]!["rules"]!.AsArray();
+        foreach (var rule in RulesFor(markers, inbound)) { rules.Add(rule!.DeepClone()); }
+        return JsonUtils.Serialize(root);
     }
 
     internal static JsonObject Inbound(string tag, RouteSocksEndpoint endpoint) => new()

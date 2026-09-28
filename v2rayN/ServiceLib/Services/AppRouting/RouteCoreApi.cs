@@ -27,7 +27,16 @@ internal sealed class RouteCoreApi(string core, IReadOnlyDictionary<string, stri
             await process.WaitForExitAsync(token);
             var detail = await error;
             var result = await output;
-            if (process.ExitCode != 0) { throw new IOException($"Xray API {command} failed: {detail} {result}"); }
+            if (process.ExitCode != 0)
+            {
+                var message = $"Xray API {command} failed: {detail} {result}";
+                // GeoSite/GeoIP references expand in the CLI before gRPC sends the request.
+                // Even one JSON rule can exceed the server's 4 MiB receive limit.
+                if (command == "adrules" && detail.Contains("code = ResourceExhausted", StringComparison.Ordinal)
+                    && detail.Contains("grpc: received message larger than max", StringComparison.Ordinal))
+                { throw new RouteRuleSizeException(message); }
+                throw new IOException(message);
+            }
         }
         finally
         {
@@ -37,3 +46,5 @@ internal sealed class RouteCoreApi(string core, IReadOnlyDictionary<string, stri
         }
     }
 }
+
+internal sealed class RouteRuleSizeException(string message) : IOException(message);

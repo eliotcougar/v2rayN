@@ -175,6 +175,43 @@ public class SharedRoutingTests
     }
 
     [Test]
+    public async Task FileConfiguredCorePreservesOrderedGeoRulesDestinationsAndInternalDns()
+    {
+        var routing = Routing(new() { Domain = ["geosite:ru-blocked-all"], OutboundTag = Global.BlockTag },
+            new() { Ip = ["geoip:!private"], OutboundTag = Global.DirectTag },
+            App(RoutingSelector.Process, "client.exe"), App(RoutingSelector.Process, "other.exe", outbound: Global.BlockTag));
+        var shared = new RouteSharedRules(routing);
+        var context = CoreConfigTestFactory.CreateContext(CoreConfigTestFactory.CreateConfig(),
+            CoreConfigTestFactory.CreateSocksNode(ECoreType.Xray), ECoreType.Xray) with { RoutingItem = routing };
+        var generated = new CoreConfigV2rayService(context).GenerateClientSocksConfig(12345, true, shared.Projection);
+        await generated.Success.Should().BeTrue();
+        var template = new RouteSharedTemplate((string)generated.Data!, shared);
+        template.Root["api"] = new JsonObject { ["listen"] = "127.0.0.1:12346" };
+        var dns = new JsonObject { ["type"] = "field", ["inboundTag"] = new JsonArray("dns-in"), ["outboundTag"] = Global.DirectTag };
+        template.Root["routing"]!["rules"]!.AsArray().Insert(0, dns);
+        var original = template.Root.ToJsonString();
+
+        // Exclude the other application's branch while retaining common native rules.
+        var markers = shared.Branches.Take(3).Select(b => b.Marker).ToArray();
+        var configured = JsonNode.Parse(template.ConfigFor(markers, "identity"))!;
+        var native = configured["routing"]!["rules"]!.AsArray();
+        var identity = native.Where(r => r!["inboundTag"]![0]!.GetValue<string>() == "identity").ToArray();
+        await identity.Length.Should().BeEqualTo(4);
+        await identity[0]!["domain"]![0]!.GetValue<string>().Should().BeEqualTo("geosite:ru-blocked-all");
+        await identity[1]!["ip"]![0]!.GetValue<string>().Should().BeEqualTo("geoip:!private");
+        await identity[2]!["outboundTag"]!.GetValue<string>().Should().BeEqualTo(Global.DirectTag);
+        await identity[3]!["outboundTag"]!.GetValue<string>().Should().BeEqualTo(Global.ProxyTag);
+        await JsonNode.DeepEquals(native[0], dns).Should().BeTrue();
+        foreach (var field in new[] { "outbounds", "dns" })
+        { await JsonNode.DeepEquals(configured[field], template.Root[field]).Should().BeTrue(); }
+        await configured["api"].Should().BeNull();
+        await configured["inbounds"]!.AsArray().Count.Should().BeEqualTo(1);
+        await configured["inbounds"]![0]!["tag"]!.GetValue<string>().Should().BeEqualTo("identity");
+        await configured["inbounds"]![0]!["settings"]!["udp"]!.GetValue<bool>().Should().BeTrue();
+        await template.Root.ToJsonString().Should().BeEqualTo(original);
+    }
+
+    [Test]
     public async Task DisabledRowsAndOtherInboundScopesDoNotCaptureUnrelatedProcesses()
     {
         var disabled = App(RoutingSelector.Process, "client.exe");

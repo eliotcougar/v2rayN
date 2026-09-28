@@ -183,6 +183,12 @@ shared Xray core retains originating process/package identity across the relay.
 HTTP/TLS/QUIC sniffing is routing-only and preserves the original destination IP.
 Encrypted or unavailable names cannot participate in hostname rules.
 
+If expanded GeoSite/GeoIP rules exceed Xray's API message limit, the same rules
+load from a config file in a separate owned core for each observed application
+match combination. Matching applications reuse that core. Rule order and
+destinations are unchanged; large rule sets may require additional memory and
+core processes. The main log reports when this fallback is first used.
+
 Changed effective configurations prepare a new shared core before applying the
 new policy. Unchanged configurations reuse their core; failed preparation retains
 the previous live policy and reports the failure. The capture engine stays open
