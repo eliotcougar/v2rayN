@@ -24,24 +24,28 @@ internal sealed class RouteUdpSession : IDisposable
     private readonly Reply _reply;
     private readonly Func<bool> _ownsFlow;
     private readonly Func<bool> _canSend;
+    private readonly Func<bool> _canReuse;
     private Socket? _socket;
     private Socket? _control;
     public Task Completion
     {
         get;
     }
-    public bool IsUsable => !Completion.IsCompleted && _canSend();
+    // A permanently invalid reply owner must not leave an outbound-only session
+    // cached forever. Already-attributed queued packets still use _canSend below.
+    public bool IsUsable => !Completion.IsCompleted && _canSend() && _canReuse();
     private long _lastActivity = Environment.TickCount64;
     public long LastActivity => Interlocked.Read(ref _lastActivity);
 
     public RouteUdpSession(RouteTarget rule, IPEndPoint destination, Reply reply, CancellationToken token, Action<Exception> error,
-        Func<bool> ownsFlow, ArrayPool<byte>? buffers = null, Func<bool>? canSend = null)
+        Func<bool> ownsFlow, ArrayPool<byte>? buffers = null, Func<bool>? canSend = null, Func<bool>? canReuse = null)
     {
         _rule = rule;
         _destination = destination;
         _reply = reply;
         _ownsFlow = ownsFlow;
         _canSend = canSend ?? ownsFlow;
+        _canReuse = canReuse ?? (() => true);
         _buffers = buffers ?? ArrayPool<byte>.Shared;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(token);
         Completion = Run(error);

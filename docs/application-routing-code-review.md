@@ -596,8 +596,17 @@ socket using several source addresses or both IP families can still have several
 sessions; NETWORK has no socket ID, so correlation remains asynchronous.
 
 `RouteFlowOwner` checks the current immutable ownership index for replies,
-including process creation time and endpoint ID. Once ownership is lost, reply
-delivery stays invalid. Outbound datagrams already attributed at capture may
+including process creation time, target identity and endpoint ID. A snapshot
+older than 500 ms suppresses that reply and requests a coalesced background
+refresh, without permanently invalidating the association. A fresh snapshot
+confirming the same owner permits subsequent replies on the existing association.
+Stale replies are dropped, not buffered for later delivery.
+
+A fresh mismatch, including unresolved/shared ownership, permanently invalidates
+the old association. `IsUsable` then excludes it from the session cache, so the
+next freshly attributed outgoing packet can replace it even if the cache key
+matches again. Later evidence cannot revive the invalidated association or
+authorize its late replies. Outbound datagrams already attributed at capture may
 finish even after the sender exits during proxy setup. Their separate `canSend`
 predicate checks that the current policy still owns the same target object and
 that the interface remains monitored. No rule serialization is needed. A
@@ -704,7 +713,7 @@ even if no further input arrives.
 | WinDivert send/shutdown/close | `_sendGate`; blocking receive is outside the lock. |
 | NAT dictionaries | Short NAT lock; each entry separately owns relay cancellation. |
 | Relay/session lookup and task registries | Concurrent dictionaries with exact-entry removal. |
-| UDP ownership validity | Sticky invalidation under `RouteFlowOwner` lock; its callback only reads the immutable index. |
+| UDP ownership validity | Fresh mismatches latch invalidation under `RouteFlowOwner` lock; stale evidence only suppresses delivery and requests refresh. |
 | Shared timestamps and NAT flags | Interlocked long accesses and volatile flags, including x86. |
 
 UDP validity callbacks never take the packet lock: they read immutable policy
@@ -796,6 +805,7 @@ cover these boundaries:
 | `FragmentTests.cs` | Out-of-order assembly, early unselected bypass, policy invalidation, SYN/reflection exceptions, overlap and expiry. |
 | `SocksTests.cs` | Internal endpoint authentication, split replies, domain bind replies, IPv6, framing, and failed-method behavior. |
 | `UdpSessionTests.cs` | Byte budget and release, pooled buffer ownership on send/rejection/cancellation/failure, exact wire/reply payloads from empty through large datagrams, queued ownership, sends after process exit with discarded replies, stale/reused owners, multi-peer association identity, actual reply peers, domain relay endpoints, and internal endpoint preparation. |
+| `UdpRecoveryTests.cs` | Stale-snapshot recovery without replacing the association, terminal owner/PID/endpoint/rule changes, and IPv4/IPv6 SOCKS datagram exchanges that replace invalidated sessions and preserve source endpoints and payloads. |
 | `ShutdownTests.cs` | Accept reset/abort recovery, fatal listener shutdown, cancellation during handshake stages, and late task registration during disposal. |
 
 `RouteTestFactory` builds the production shared policy for attribution tests;

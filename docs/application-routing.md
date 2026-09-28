@@ -217,8 +217,12 @@ main log panel instead of popup notifications; `guiLogs` retains diagnostics.
   A new TCP connection refreshes ownership before choosing its route. Initial
   sequence numbers distinguish a reconnect from a retransmitted SYN while the
   previous relay is still closing.
-  UDP sessions check the latest ownership index before sending or delivering
-  replies and are discarded after an observed ownership change. Failed associations can be retried on the next datagram.
+  UDP capture and reply delivery check the latest ownership index. A stale
+  snapshot suppresses a reply and requests refresh; subsequent replies resume
+  on the same association when fresh evidence confirms the original owner.
+  A fresh ownership mismatch permanently invalidates the old association.
+  Failed or invalidated associations can be replaced on the next attributed
+  datagram, even if the same endpoint is selected again.
   Missing or stale ownership is held for up to 250 ms on retries, within a
   512-packet/4 MiB budget, then dropped with a throttled notice. It is not treated
   as a proven unselected application; under load or inaccessible ownership, this

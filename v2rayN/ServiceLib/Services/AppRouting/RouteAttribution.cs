@@ -36,6 +36,11 @@ internal sealed class RouteAttributionSnapshot
             .ToDictionary(g => g.Key, g => g.Select(r => r.Pid).Distinct().Select(decide).Distinct().ToArray());
     }
 
+    // Null distinguishes missing fresh evidence from an unresolved owner in a
+    // fresh snapshot. UDP replies may resume after the former, never the latter.
+    public RouteDecision? FindFresh(RouteFlow flow, long now, long arrived = 0, long timestamp = 0) =>
+        now - ReadAt > 500 || ReadAt < arrived ? null : Find(flow, timestamp);
+
     public RouteDecision Find(RouteFlow flow, long timestamp = 0)
     {
         var observed = _events?.Find(flow, timestamp);

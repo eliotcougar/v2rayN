@@ -194,11 +194,8 @@ internal sealed class AppRouteEngine : IRouteEngine
     private RouteDecision Match(RouteFlow flow, long arrived = 0, bool requireFreshSnapshot = false, long timestamp = 0)
     {
         var snapshot = Volatile.Read(ref _routing).Owners;
-        if (Environment.TickCount64 - snapshot.ReadAt > 500 || requireFreshSnapshot && snapshot.ReadAt < arrived)
-        {
-            return RouteDecision.Unresolved;
-        }
-        return snapshot.Find(flow, timestamp);
+        return snapshot.FindFresh(flow, Environment.TickCount64, requireFreshSnapshot ? arrived : 0, timestamp)
+            ?? RouteDecision.Unresolved;
     }
 
     private void Capture()
@@ -410,19 +407,22 @@ internal sealed class AppRouteEngine : IRouteEngine
     {
         var rule = selected.Rule!;
         var originalInterfaces = _interfaces;
-        var owner = new RouteFlowOwner(selected.Process!.Value, () =>
+        var owner = new RouteFlowOwner(selected, () =>
         {
-            if (!_getInterfaces().Retains(originalInterfaces, replyAddress.InterfaceIndex,
-                    flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6)) { return null; }
-            var current = Match(flow);
-            return current.Kind == RouteDecisionKind.Selected && ReferenceEquals(current.Rule, rule) && current.Endpoint == selected.Endpoint ? current.Process : null;
+            var routing = Volatile.Read(ref _routing);
+            if (!routing.Policy.Retains(rule) || !_getInterfaces().Retains(originalInterfaces, replyAddress.InterfaceIndex,
+                    flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6)) { return RouteDecision.Unselected; }
+            var current = routing.Owners.FindFresh(flow, Environment.TickCount64);
+            if (current == null) { RequestRefresh(); }
+            return current;
         });
         replyAddress.Outbound = false;
         return new(rule, new(flow.RemoteAddress, flow.RemotePort),
             (peer, payload) => SendUdpReply(flow with { RemoteAddress = peer.Address, RemotePort = (ushort)peer.Port }, replyAddress, payload),
             _stop.Token, Report, owner.IsCurrent, canSend: () => !_stop.IsCancellationRequested &&
                 Volatile.Read(ref _routing).Policy.Retains(rule) && _getInterfaces().Retains(originalInterfaces,
-                    replyAddress.InterfaceIndex, flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6));
+                    replyAddress.InterfaceIndex, flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6),
+            canReuse: () => !owner.IsInvalidated);
     }
 
     private void SendUdpReply(RouteFlow flow, DivertAddress address, ReadOnlySpan<byte> payload)

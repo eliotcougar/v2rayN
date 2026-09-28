@@ -1,24 +1,30 @@
 namespace ServiceLib.Services.AppRouting;
 
-/// <summary>Invalidates a UDP session when its local endpoint changes process owner.</summary>
-internal sealed class RouteFlowOwner(RouteProcessKey owner, Func<RouteProcessKey?> readOwner)
+/// <summary>Suppresses replies without fresh ownership evidence and retires changed UDP endpoints.</summary>
+internal sealed class RouteFlowOwner(RouteDecision owner, Func<RouteDecision?> readOwner)
 {
     private readonly object _gate = new();
-    private bool _current = true;
+    private bool _invalidated;
+
+    public bool IsInvalidated
+    {
+        get { lock (_gate) { return _invalidated; } }
+    }
 
     public bool IsCurrent()
     {
         lock (_gate)
         {
-            if (!_current)
-            {
-                return false;
-            }
-            // The reader uses an immutable index; do not add another cache delay.
-            // Once ownership is lost this session stays invalid.
-            _current = false;
-            _current = readOwner() == owner;
-            return _current;
+            if (_invalidated) { return false; }
+            // A stale snapshot cannot authorize a reply, but is not evidence of
+            // socket closure. Keep the association for the next fresh snapshot.
+            var current = readOwner();
+            if (current == null) { return false; }
+            // A fresh mismatch is terminal, including process/endpoint reuse and
+            // shared binds. Never revive an old association for a different socket.
+            _invalidated = current.Kind != RouteDecisionKind.Selected || current.Process != owner.Process
+                || !ReferenceEquals(current.Rule, owner.Rule) || current.Endpoint != owner.Endpoint;
+            return !_invalidated;
         }
     }
 }

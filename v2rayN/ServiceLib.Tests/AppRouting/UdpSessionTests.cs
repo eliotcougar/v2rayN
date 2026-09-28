@@ -378,12 +378,12 @@ public class UdpSessionTests
     [Arguments(true)]
     public async Task SessionOwnershipExpiresForDifferentProcessOrReusedPid(bool reusedPid)
     {
-        var owner = new RouteProcessKey(10, 100);
-        RouteProcessKey? current = owner;
+        var owner = new RouteDecision(RouteDecisionKind.Selected, new(10, 100), RouteTestFactory.Target(), 1);
+        RouteDecision? current = owner;
         var reads = 0;
         var lifetime = new RouteFlowOwner(owner, () => { reads++; return current; });
         await lifetime.IsCurrent().Should().BeTrue();
-        current = reusedPid ? new(10, 200) : new(20, 100);
+        current = owner with { Process = reusedPid ? new(10, 200) : new(20, 100) };
         await lifetime.IsCurrent().Should().BeFalse();
         current = owner;
         await lifetime.IsCurrent().Should().BeFalse();
@@ -393,7 +393,7 @@ public class UdpSessionTests
     [Test]
     public async Task SessionOwnershipLossAlsoCoversClosedOrSharedEndpoints()
     {
-        var lifetime = new RouteFlowOwner(new(10, 100), () => null);
+        var lifetime = new RouteFlowOwner(new(RouteDecisionKind.Selected, new(10, 100), RouteTestFactory.Target()), () => RouteDecision.Unresolved);
         await lifetime.IsCurrent().Should().BeFalse();
     }
 
