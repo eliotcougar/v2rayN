@@ -9,6 +9,70 @@ public class UdpSessionTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task IdleSocketKeepsItsAssociationAndReceivesLateReplies(bool staleSnapshot)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var tcp = new TcpListener(IPAddress.Loopback, 0);
+        using var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        tcp.Start();
+        var destination = new IPEndPoint(IPAddress.Loopback, 1194);
+        var target = RouteTestFactory.Target(((IPEndPoint)tcp.LocalEndpoint).Port);
+        var selected = new RouteDecision(RouteDecisionKind.Selected, new(10, 100), target, 7);
+        RouteDecision? current = selected;
+        var owner = new RouteFlowOwner(selected, () => Volatile.Read(ref current));
+        var replies = Channel.CreateUnbounded<byte[]>();
+        var received = new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var errors = new ConcurrentQueue<Exception>();
+        var server = Task.Run(async () =>
+        {
+            using var client = await tcp.AcceptTcpClientAsync(timeout.Token);
+            using var stream = client.GetStream();
+            await stream.ReadExactlyAsync(new byte[3], timeout.Token);
+            await stream.WriteAsync(new byte[] { 5, 0 }, timeout.Token);
+            await stream.ReadExactlyAsync(new byte[10], timeout.Token);
+            await stream.WriteAsync(new byte[] { 5, 0, 0 }.Concat(RouteConnector.EncodeAddress((IPEndPoint)udp.Client.LocalEndPoint!)).ToArray(), timeout.Token);
+            var first = await udp.ReceiveAsync(timeout.Token);
+            received.SetResult(first.RemoteEndPoint);
+            var resumed = await udp.ReceiveAsync(timeout.Token);
+            await resumed.RemoteEndPoint.Should().BeEqualTo(first.RemoteEndPoint);
+            await udp.SendAsync(resumed.Buffer, resumed.RemoteEndPoint, timeout.Token);
+            try { await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0); }
+            catch (IOException ex) when (ex.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset }) { }
+        });
+        using var session = new RouteUdpSession(target, destination, (_, payload) => replies.Writer.TryWrite(payload.ToArray()),
+            timeout.Token, errors.Enqueue, owner.IsCurrent, canSend: () => true, canReuse: () => !owner.IsInvalidated);
+        try
+        {
+            session.Send(destination, [1]);
+            var source = await received.Task.WaitAsync(timeout.Token);
+            if (staleSnapshot) { Volatile.Write(ref current, null); }
+            // Advance cleanup's clock, without an actual minute-long test delay.
+            if (session.CanExpire(session.LastActivity + 60_001)) { session.Dispose(); }
+            await session.IsUsable.Should().BeTrue();
+            Volatile.Write(ref current, selected);
+            await udp.SendAsync(RouteConnector.WrapDatagram(destination, [2]), source, timeout.Token);
+            await (await replies.Reader.ReadAsync(timeout.Token)).SequenceEqual(new byte[] { 2 }).Should().BeTrue();
+            session.Send(destination, [3]);
+            await (await replies.Reader.ReadAsync(timeout.Token)).SequenceEqual(new byte[] { 3 }).Should().BeTrue();
+            // A closed/reused socket must still release its idle association.
+            Volatile.Write(ref current, selected with { Endpoint = 8 });
+            await session.CanExpire(session.LastActivity + 60_001).Should().BeTrue();
+            await owner.IsInvalidated.Should().BeTrue();
+        }
+        finally
+        {
+            session.Dispose();
+            await session.Completion.WaitAsync(timeout.Token);
+            timeout.Cancel();
+            try { await server; }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
+        }
+        await errors.IsEmpty.Should().BeTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task DatagramRoundTripsPreserveEveryByteAcrossDifferentPayloadSizes(bool ipv6)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));

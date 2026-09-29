@@ -14,6 +14,7 @@ internal sealed class AppRouteEngine : IRouteEngine
     private readonly RouteAttributionSource _attribution = new();
     private readonly RoutePendingPackets _pending = new();
     private readonly SemaphoreSlim _refreshRequest = new(0, 1);
+    private readonly RouteAttributionUpdates _attributionUpdates = new();
     private readonly TaskCompletionSource<Exception?> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private sealed record Routing(RoutePolicy Policy, RouteAttributionSnapshot Owners);
     private Routing _routing;
@@ -89,7 +90,7 @@ internal sealed class AppRouteEngine : IRouteEngine
         {
             _stop.Token.ThrowIfCancellationRequested();
             token.ThrowIfCancellationRequested();
-            Volatile.Write(ref _routing, new(policy, owners));
+            PublishRouting(policy, owners);
             _fragments.ClearDecisions();
             _nat.Retain(policy);
             foreach (var pair in _udp.Where(p => !policy.Retains(p.Value.Rule)).ToArray())
@@ -105,7 +106,7 @@ internal sealed class AppRouteEngine : IRouteEngine
         // Observe lifecycle events before opening NETWORK, including processes
         // that run entirely between the seed snapshot and the first captured packet.
         _attribution.StartEvents(() => { if (Volatile.Read(ref _waitingForOwner) != 0) { RequestRefresh(); } });
-        _routing = new(_routing.Policy, _attribution.Read(_routing.Policy, flushEvents: true));
+        PublishRouting(_routing.Policy, _attribution.Read(_routing.Policy, flushEvents: true));
         foreach (var family in new[] { AddressFamily.InterNetwork, AddressFamily.InterNetworkV6 })
         {
             if (family == AddressFamily.InterNetworkV6 && !Socket.OSSupportsIPv6)
@@ -163,7 +164,7 @@ internal sealed class AppRouteEngine : IRouteEngine
                 {
                     if (!ReferenceEquals(previous.Policy, _routing.Policy))
                     { continue; }
-                    Volatile.Write(ref _routing, new(previous.Policy, snapshot));
+                    PublishRouting(previous.Policy, snapshot);
                     RefreshInterfaces();
                     // Retry each packet once per snapshot, even if it must wait again.
                     for (var remaining = _pending.Count; remaining > 0; remaining--)
@@ -179,6 +180,12 @@ internal sealed class AppRouteEngine : IRouteEngine
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         catch (Exception ex) { Fail(ex); }
+    }
+
+    private void PublishRouting(RoutePolicy policy, RouteAttributionSnapshot owners)
+    {
+        Volatile.Write(ref _routing, new(policy, owners));
+        _attributionUpdates.Publish();
     }
 
     private void RequestRefresh()
@@ -277,12 +284,12 @@ internal sealed class AppRouteEngine : IRouteEngine
         List<(byte[] Packet, DivertAddress Address)>? fragments = null, RoutePendingPackets.Packet? pending = null, RoutePacketBatch? output = null)
     {
         var arrived = pending?.Arrived ?? Environment.TickCount64;
-        bool DeferIfUnresolved(RouteDecision decision)
+        bool DeferIfUnresolved(RouteDecision decision, RouteFlow flow)
         {
             if (decision.Kind is not (RouteDecisionKind.Unresolved or RouteDecisionKind.Ambiguous))
             { return false; }
             if (decision.Kind == RouteDecisionKind.Ambiguous)
-            { throw new IOException("Ambiguous shared endpoint; packet blocked."); }
+            { throw new IOException($"Ambiguous shared endpoint; {(flow.Protocol == 6 ? "TCP" : "UDP")} {new IPEndPoint(flow.LocalAddress, flow.LocalPort)} -> {new IPEndPoint(flow.RemoteAddress, flow.RemotePort)} blocked."); }
             var withinDeadline = Environment.TickCount64 - arrived < RoutePendingPackets.WaitMilliseconds;
             var queued = withinDeadline && (pending == null
                 ? _pending.Add(bytes.Span, address, arrived, fragments)
@@ -342,7 +349,7 @@ internal sealed class AppRouteEngine : IRouteEngine
                 // A new connection can reuse a closed tuple. Require a snapshot
                 // begun after its SYN before choosing the route for the stream.
                 var match = Match(flow, arrived, requireFreshSnapshot: packet.IsTcpSyn, timestamp: address.Timestamp);
-                if (DeferIfUnresolved(match))
+                if (DeferIfUnresolved(match, flow))
                 { return; }
                 if (match.Kind == RouteDecisionKind.Unselected)
                 {
@@ -368,7 +375,7 @@ internal sealed class AppRouteEngine : IRouteEngine
         {
             if (!Monitors(address, flow.LocalAddress.AddressFamily)) { PassThrough(); return; }
             var match = Match(flow, timestamp: address.Timestamp);
-            if (DeferIfUnresolved(match))
+            if (DeferIfUnresolved(match, flow))
             { return; }
             if (match.Kind == RouteDecisionKind.Unselected)
             { PassThrough(); return; }
@@ -412,9 +419,7 @@ internal sealed class AppRouteEngine : IRouteEngine
             var routing = Volatile.Read(ref _routing);
             if (!routing.Policy.Retains(rule) || !_getInterfaces().Retains(originalInterfaces, replyAddress.InterfaceIndex,
                     flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6)) { return RouteDecision.Unselected; }
-            var current = routing.Owners.FindFresh(flow, Environment.TickCount64);
-            if (current == null) { RequestRefresh(); }
-            return current;
+            return routing.Owners.FindFresh(flow, Environment.TickCount64);
         });
         replyAddress.Outbound = false;
         return new(rule, new(flow.RemoteAddress, flow.RemotePort),
@@ -422,7 +427,8 @@ internal sealed class AppRouteEngine : IRouteEngine
             _stop.Token, Report, owner.IsCurrent, canSend: () => !_stop.IsCancellationRequested &&
                 Volatile.Read(ref _routing).Policy.Retains(rule) && _getInterfaces().Retains(originalInterfaces,
                     replyAddress.InterfaceIndex, flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6),
-            canReuse: () => !owner.IsInvalidated);
+            canReuse: () => !owner.IsInvalidated,
+            waitForOwner: token => owner.WaitForCurrentAsync(_attributionUpdates, RequestRefresh, token));
     }
 
     private void SendUdpReply(RouteFlow flow, DivertAddress address, ReadOnlySpan<byte> payload)
@@ -548,7 +554,7 @@ internal sealed class AppRouteEngine : IRouteEngine
                 _nat.Expire(Environment.TickCount64);
                 foreach (var pair in _udp)
                 {
-                    if (Environment.TickCount64 - pair.Value.LastActivity > 60_000 || pair.Value.Completion.IsCompleted)
+                    if (pair.Value.CanExpire(Environment.TickCount64))
                     {
                         // The capture thread may have replaced this completed session already.
                         if (_udp.TryRemove(pair))

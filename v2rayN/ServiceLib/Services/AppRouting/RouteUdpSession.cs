@@ -25,6 +25,7 @@ internal sealed class RouteUdpSession : IDisposable
     private readonly Func<bool> _ownsFlow;
     private readonly Func<bool> _canSend;
     private readonly Func<bool> _canReuse;
+    private readonly Func<CancellationToken, ValueTask<bool>>? _waitForOwner;
     private Socket? _socket;
     private Socket? _control;
     public Task Completion
@@ -33,12 +34,24 @@ internal sealed class RouteUdpSession : IDisposable
     }
     // A permanently invalid reply owner must not leave an outbound-only session
     // cached forever. Already-attributed queued packets still use _canSend below.
-    public bool IsUsable => !Completion.IsCompleted && _canSend() && _canReuse();
+    public bool IsUsable => !_stop.IsCancellationRequested && !Completion.IsCompleted && _canSend() && _canReuse();
     private long _lastActivity = Environment.TickCount64;
     public long LastActivity => Interlocked.Read(ref _lastActivity);
 
+    internal bool CanExpire(long now)
+    {
+        if (Completion.IsCompleted) { return true; }
+        if (now - LastActivity <= 60_000) { return false; }
+        // Silence does not close the application's socket. Keep its association
+        // and source port until fresh evidence invalidates that socket. A stale
+        // snapshot cannot retire a live VPN or discard a delayed reply.
+        _ownsFlow();
+        return !_canReuse();
+    }
+
     public RouteUdpSession(RouteTarget rule, IPEndPoint destination, Reply reply, CancellationToken token, Action<Exception> error,
-        Func<bool> ownsFlow, ArrayPool<byte>? buffers = null, Func<bool>? canSend = null, Func<bool>? canReuse = null)
+        Func<bool> ownsFlow, ArrayPool<byte>? buffers = null, Func<bool>? canSend = null, Func<bool>? canReuse = null,
+        Func<CancellationToken, ValueTask<bool>>? waitForOwner = null)
     {
         _rule = rule;
         _destination = destination;
@@ -46,6 +59,7 @@ internal sealed class RouteUdpSession : IDisposable
         _ownsFlow = ownsFlow;
         _canSend = canSend ?? ownsFlow;
         _canReuse = canReuse ?? (() => true);
+        _waitForOwner = waitForOwner;
         _buffers = buffers ?? ArrayPool<byte>.Shared;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(token);
         Completion = Run(error);
@@ -91,6 +105,9 @@ internal sealed class RouteUdpSession : IDisposable
             }
 
             _socket = new Socket(local.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+            // While one reply waits for ownership in the existing receive buffer,
+            // the OS queues a bounded amount of subsequent traffic for this socket.
+            _socket.ReceiveBufferSize = 64 * 1024;
             _socket.Bind(new IPEndPoint(local, 0));
             var relay = await RouteConnector.Request(_control, 3, (IPEndPoint)_socket.LocalEndPoint!, connectTimeout.Token);
             if (relay is IPEndPoint ipRelay && ipRelay.AddressFamily != _socket.AddressFamily)
@@ -176,7 +193,7 @@ internal sealed class RouteUdpSession : IDisposable
                 continue;
             }
 
-            if (!_ownsFlow())
+            if (!_ownsFlow() && (_waitForOwner == null || !await _waitForOwner(_stop.Token)))
             {
                 // A late reply must not cancel already-attributed outbound datagrams.
                 if (!_canSend()) { return; }

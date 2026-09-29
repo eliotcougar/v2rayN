@@ -64,10 +64,13 @@ internal sealed class RouteSocketEvents : IDisposable
 /// <summary>Socket lifetimes survive close long enough to attribute packets already in the capture queue.</summary>
 internal sealed class RouteSocketHistory
 {
-    internal sealed record Entry(RouteSocketEvent Open, long? Closed = null);
+    internal sealed record Entry(RouteSocketEvent Open, long? Closed = null, long? MissingSince = null);
     private readonly Dictionary<ulong, List<Entry>> _endpoints = [];
+    private static readonly long Retention = 10 * Stopwatch.Frequency;
+    internal int Count => _endpoints.Sum(p => p.Value.Count);
 
-    public void Update(IEnumerable<RouteSocketEvent> events, long now, Func<int, long, long?>? processExit = null)
+    public void Update(IEnumerable<RouteSocketEvent> events, long now, Func<int, long, long?>? processExit = null,
+        Func<RouteSocketEvent, bool>? isPresent = null)
     {
         foreach (var item in events.OrderBy(e => e.Timestamp))
         {
@@ -84,26 +87,48 @@ internal sealed class RouteSocketHistory
             }
             else
             {
+                // UDP authorization may repeat for a live endpoint. A bind already
+                // covers its peers; identical observations are not new lifetimes.
+                if (entries.Any(e => Covers(e, item, processExit))) { continue; }
                 var closed = entries.Where(e => e.Closed >= item.Timestamp).Select(e => e.Closed).Min();
                 entries.Add(new(item, closed));
             }
         }
-        if (processExit != null)
+        foreach (var entries in _endpoints.Values)
         {
-            foreach (var entries in _endpoints.Values)
+            for (var i = 0; i < entries.Count; i++)
             {
-                for (var i = 0; i < entries.Count; i++)
+                var entry = entries[i];
+                if (processExit?.Invoke(entry.Open.Pid, entry.Open.Timestamp) is { } exited && (entry.Closed == null || exited < entry.Closed))
+                { entry = entry with { Closed = exited }; }
+                if (entry.Closed == null && isPresent != null)
                 {
-                    var entry = entries[i];
-                    if (processExit(entry.Open.Pid, entry.Open.Timestamp) is { } exited && (entry.Closed == null || exited < entry.Closed))
-                    { entries[i] = entry with { Closed = exited }; }
+                    // SOCKET events are observations, not a reliable lifetime ledger.
+                    // Require sustained absence from complete owner tables, so a bind
+                    // racing table publication cannot retire a long-lived UDP socket.
+                    long? missing = isPresent(entry.Open) ? null : entry.MissingSince ?? now;
+                    if (entry.MissingSince != missing) { entry = entry with { MissingSince = missing }; }
+                    if (missing is { } since && now - since > Retention)
+                    { entry = entry with { Closed = since }; }
                 }
+                entries[i] = entry;
             }
         }
-        var oldest = now - 10 * Stopwatch.Frequency;
+        var oldest = now - Retention;
         foreach (var entries in _endpoints.Values) { entries.RemoveAll(e => e.Closed < oldest); }
         foreach (var key in _endpoints.Where(p => p.Value.Count == 0).Select(p => p.Key).ToArray()) { _endpoints.Remove(key); }
-        if (_endpoints.Sum(p => p.Value.Count) > 65536) { throw new IOException("Application-routing socket history exceeded its capacity."); }
+        if (Count > 65536) { throw new IOException($"Application-routing socket history exceeded its capacity ({Count} records in {_endpoints.Count} endpoints)."); }
+    }
+
+    private static bool Covers(Entry entry, RouteSocketEvent item, Func<int, long, long?>? processExit)
+    {
+        var open = entry.Open;
+        if (open.Pid != item.Pid || open.Timestamp > item.Timestamp || entry.Closed < item.Timestamp ||
+            processExit?.Invoke(open.Pid, open.Timestamp) < item.Timestamp) { return false; }
+        if (open.Event == item.Event && open.Flow == item.Flow) { return true; }
+        return open.Event == 3 && open.Flow.Protocol == 17 && item.Flow.Protocol == 17 &&
+            open.Flow.RemotePort == 0 && open.Flow.LocalPort == item.Flow.LocalPort &&
+            RouteSocketSnapshot.MatchesAddress(open.Flow.LocalAddress, item.Flow.LocalAddress);
     }
 
     public RouteSocketSnapshot Snapshot(Func<int, long, RouteDecision> decide) => new(_endpoints.Values.SelectMany(e => e), decide);
@@ -143,7 +168,7 @@ internal sealed class RouteSocketSnapshot
         return result ?? (known ? RouteDecision.Unresolved : null);
     }
 
-    private static bool MatchesAddress(IPAddress socket, IPAddress packet)
+    internal static bool MatchesAddress(IPAddress socket, IPAddress packet)
     {
         if (socket.AddressFamily != packet.AddressFamily) { return false; }
         if (socket.Equals(IPAddress.Any) || socket.Equals(IPAddress.IPv6Any) || socket.Equals(packet)) { return true; }

@@ -139,6 +139,13 @@ internal sealed class RouteSharedTemplate
     public RouteSharedTemplate(string json, RouteSharedRules rules)
     {
         Root = JsonNode.Parse(json)!.AsObject();
+        // A transparent relay must not close a quiet TCP connection on Xray's
+        // default five-minute idle timer. Zero means immediate expiry in Xray;
+        // use a practical infinity (seconds), only in our private level-0 core.
+        var policy = Root["policy"] ??= new JsonObject();
+        var levels = policy["levels"] ??= new JsonObject();
+        var level = levels["0"] ??= new JsonObject();
+        level["connIdle"] = int.MaxValue;
         var native = Root["routing"]!["rules"]!.AsArray();
         _final = native.Last()!.DeepClone();
         native.RemoveAt(native.Count - 1);

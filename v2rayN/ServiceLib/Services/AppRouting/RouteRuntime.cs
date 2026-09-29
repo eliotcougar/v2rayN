@@ -26,6 +26,7 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
     private IDisposable? _lease;
     private IRouteProfile? _core;
     private string? _key;
+    private RouteProfilePlan? _plan;
     public bool IsRunning => _engine != null;
     public long Generation { get; private set; }
 
@@ -41,25 +42,33 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
         // Keeping the preference enabled without capture selectors needs no driver or observers.
         if (plan == null) { await StopAsync(); return; }
         var lease = _lease ?? acquireLease();
+        var retired = _core;
         var next = _core;
         IRouteEngine? candidate = null;
         try
         {
             token.ThrowIfCancellationRequested();
             if (_key != plan.Key || next == null || next.Completion.IsCompleted) { next = await plan.Start(token); }
+            // A user reload can beat the recovery timer. A stopped engine cannot
+            // accept a policy; drain its native observers before starting another.
+            if (_engine?.Completion.IsCompleted == true)
+            {
+                var failed = _engine;
+                _engine = null;
+                await failed.DisposeAsync();
+            }
             candidate = _engine == null ? createEngine() : null;
             token.ThrowIfCancellationRequested();
             await (candidate ?? _engine!).ApplyAsync(next.SharedPolicy!, [next.ProcessId], token);
             // Cancellation after commit belongs to StopAsync, which drains the new policy's resources.
             candidate?.Start();
-            var retired = _core;
             _engine ??= candidate;
             _core = next;
             _key = plan.Key;
+            _plan = plan;
             _lease = lease;
             Generation++;
             candidate = null;
-            if (retired != null && retired != next) { await retired.DisposeAsync(); }
         }
         catch
         {
@@ -71,6 +80,24 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
             }
             throw;
         }
+        if (retired != null && retired != next)
+        {
+            // The new policy is already committed. A retirement error must not
+            // report a failed apply and prevent the manager from supervising it.
+            try { await retired.DisposeAsync(); }
+            catch (Exception ex) { Logging.SaveLog("AppRouting retired core cleanup", ex); }
+        }
+    }
+
+    public async Task RestartAsync(CancellationToken token)
+    {
+        // A failed restart must retain the plan for the supervisor's next retry.
+        // An explicit StopAsync still clears it and releases all owned resources.
+        var plan = _plan ?? throw new InvalidOperationException("No application-routing plan to recover.");
+        try { await StopAsync(); }
+        finally { _plan = plan; }
+        token.ThrowIfCancellationRequested();
+        await ApplyAsync(plan, token);
     }
 
     public async Task StopAsync()
@@ -82,6 +109,7 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
         _engine = null;
         _core = null;
         _key = null;
+        _plan = null;
         _lease = null;
         try { if (engine != null) { await engine.DisposeAsync(); } }
         finally

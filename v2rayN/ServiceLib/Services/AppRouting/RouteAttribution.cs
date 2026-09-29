@@ -7,8 +7,11 @@ internal sealed record RouteDecision(RouteDecisionKind Kind, RouteProcessKey? Pr
     public static readonly RouteDecision Unresolved = new(RouteDecisionKind.Unresolved);
     public static readonly RouteDecision Unselected = new(RouteDecisionKind.Unselected);
 
+    // Rejecting a port does not discard the known owner: service enrichment
+    // still needs its process generation to distinguish bypass from uncertainty.
     public RouteDecision ForFlow(RouteFlow flow) => Kind == RouteDecisionKind.Selected
-        && Rule?.CapturePorts is { } ports && !ports.Matches(flow) ? Unselected : this;
+        && Rule?.CapturePorts is { } ports && !ports.Matches(flow)
+        ? new(RouteDecisionKind.Unselected, Process, Endpoint: Endpoint) : this;
 }
 
 internal sealed class RoutePolicy(RouteSharedPolicy? routes, IEnumerable<int> excluded)
@@ -41,8 +44,7 @@ internal sealed class RouteAttributionSnapshot
             .ToDictionary(g => g.Key, g => g.Select(r => decide(r.Pid, r.ModuleName)).Distinct().ToArray());
     }
 
-    // Null distinguishes missing fresh evidence from an unresolved owner in a
-    // fresh snapshot. UDP replies may resume after the former, never the latter.
+    // Null distinguishes a stale snapshot from fresh ownership evidence.
     public RouteDecision? FindFresh(RouteFlow flow, long now, long arrived = 0, long timestamp = 0) =>
         now - ReadAt > 500 || ReadAt < arrived ? null : Find(flow, timestamp);
 
@@ -56,8 +58,13 @@ internal sealed class RouteAttributionSnapshot
         if (timestamp != 0 && observed != _events!.Find(flow, 0)) { return observed; }
         // SOCKET events have a PID but no service name. A current owner-module row can
         // resolve a shared host only when it agrees on the exact process generation.
-        if (observed.ServicePending && sampled?.Process == observed.Process && sampled.Kind != RouteDecisionKind.Unresolved)
-        { return sampled; }
+        if (observed.ServicePending && (sampled == null || sampled.Process == observed.Process))
+        {
+            // Losing the module name temporarily is not a socket close. Preserve
+            // the observed endpoint so a held reply can wait for service resolution.
+            if (sampled == null || sampled.ServicePending) { return observed; }
+            if (sampled.Kind != RouteDecisionKind.Unresolved) { return sampled with { Endpoint = observed.Endpoint }; }
+        }
         if (observed.Kind == RouteDecisionKind.Unresolved || sampled?.Kind == RouteDecisionKind.Unresolved) { return RouteDecision.Unresolved; }
         if (sampled == null || observed.Kind == sampled.Kind && observed.Process == sampled.Process && observed.Rule == sampled.Rule) { return observed; }
         return Merge(observed, sampled);
@@ -106,6 +113,17 @@ internal sealed class RouteAttributionSnapshot
     }
 }
 
+/// <summary>Broadcasts snapshot publication to pending UDP replies without polling.</summary>
+internal sealed class RouteAttributionUpdates
+{
+    private TaskCompletionSource _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Next => Volatile.Read(ref _next).Task;
+
+    // Publish the ownership snapshot before waking its readers.
+    public void Publish() => Interlocked.Exchange(ref _next,
+        new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+}
+
 /// <summary>Only background preparation/refresh calls this source. Process handles and ancestry
 /// are retained across policy changes; each result is a complete immutable packet-path snapshot.</summary>
 [SupportedOSPlatform("windows")]
@@ -119,6 +137,7 @@ internal sealed class RouteAttributionSource : IDisposable
     private RouteSocketEvents? _socketEvents;
     private long _lastProcessRead;
     private long _lastServiceRead;
+    private long _lastSocketReconciliation;
     private bool _readPackageIdentity;
     private IReadOnlyList<RouteServiceInfo> _services = [];
 
@@ -157,10 +176,6 @@ internal sealed class RouteAttributionSource : IDisposable
             var services = policy.Routes?.HasServices == true
                 ? new RouteServiceSnapshot(_services, _tree.Processes, policy.Routes.ServiceNames) : null;
             var processes = new RouteProcessDecisions(_tree, _processEvents?.Started ?? 0, services);
-            _sockets.Update(_socketEvents?.Drain() ?? [], Stopwatch.GetTimestamp(), (pid, at) => processes.OwnerAt(pid, at)?.ExitedAt);
-            var sockets = _socketEvents == null ? null : _sockets.Snapshot((pid, at) =>
-                pid <= 4 || policy.Excluded.Contains(pid) ? RouteDecision.Unselected :
-                processes.At(pid, at));
             var tcp = new List<RouteOwnerTable.Row>();
             var udp = new List<RouteOwnerTable.Row>();
             foreach (var family in new[] { AddressFamily.InterNetwork, AddressFamily.InterNetworkV6 })
@@ -171,6 +186,18 @@ internal sealed class RouteAttributionSource : IDisposable
                 udp.AddRange(services?.HasSelectedHosts == true
                     ? RouteServiceOwnerTable.Read(17, family, services) : RouteOwnerTable.Read(17, family));
             }
+            // Reuse the tables already read for attribution; reconciliation needs
+            // only a one-second cadence and never performs packet-path work.
+            RouteSocketPresence? liveSockets = null;
+            if (_socketEvents != null && readAt - _lastSocketReconciliation >= 1000)
+            {
+                liveSockets = new(tcp, udp);
+                _lastSocketReconciliation = readAt;
+            }
+            _sockets.Update(_socketEvents?.Drain() ?? [], Stopwatch.GetTimestamp(),
+                (pid, at) => processes.OwnerAt(pid, at)?.ExitedAt, liveSockets == null ? null : liveSockets.Contains);
+            var sockets = _socketEvents == null ? null : _sockets.Snapshot((pid, at) =>
+                pid <= 4 || policy.Excluded.Contains(pid) ? RouteDecision.Unselected : processes.At(pid, at));
             return new(tcp, udp, (pid, module) => pid <= 4 || policy.Excluded.Contains(pid)
                 ? RouteDecision.Unselected : processes.Current(pid, module), readAt, sockets);
         }

@@ -258,12 +258,21 @@ The replacement sequence is:
 5. Publish resource ownership and dispose the superseded core after detaching
    its routes. The capture handle and TCP listeners remain in place.
 
+If the existing engine has already failed, a reload drains that engine's workers
+and native observers before creating its replacement. The capture lease stays
+owned throughout, and an unchanged healthy core can still be reused. This lets
+saved rule changes take effect during recovery instead of applying to a stopped
+engine and leaving the supervisor to restart the older committed plan.
+
 Preparation failure disposes only newly created resources and preserves the old
 runtime. On initial failure it also releases the new capture lease. The engine's
 `ApplyAsync` contract permits cancellation/failure before commitment. Once it
 returns successfully, the runtime owns the committed resources even if cancellation
 arrives immediately afterward; `StopAsync` drains them normally. Rechecking the
 token after commitment would incorrectly dispose a core now used by live rules.
+Disposal of the superseded core is outside that preparation transaction. Its
+errors are logged without rejecting the committed update, so the manager still
+installs supervision for the new runtime generation.
 
 Stop cancels an outstanding preparation before waiting for the lifecycle semaphore.
 Shutdown sets its flag before stopping, so delayed startup cannot outlive exit.
@@ -288,6 +297,15 @@ application branch metadata, the resolved core path, and sorted core environment
 chain/balancer, DNS and routing changes therefore invalidate the plan
 without maintaining a separate list of every dependency property. Identical
 effective plans share a core, including across reloads.
+
+`RouteSharedTemplate` sets the private core's level-0 `connIdle` to
+`int.MaxValue` seconds (about 68 years). Xray interprets zero as immediate
+expiry, not an unlimited lifetime. This avoids its default 300-second idle
+policy closing a healthy, quiet TCP relay. The setting reaches both API-created
+inbounds and file-configured fallback cores. Other policy fields and levels are
+preserved; the main core and remote server settings are untouched. Normal socket
+closure, setup deadlines, rule retirement and engine shutdown still close relays.
+Xray's separate UDP dispatcher and remote network idle limits remain in effect.
 
 [RouteProfileInstance.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProfileInstance.cs)
 substitutes an ephemeral loopback port and random password, writes a unique config,
@@ -354,6 +372,14 @@ new unresolved flows, with at least 25 ms between completed refreshes to coalesc
 bursts. Process snapshots reconcile once per second. Event callbacks wake the
 worker only when packets are waiting, without acquiring the packet lock. The
 index is atomically replaced only if its policy is still current.
+
+SOCKET events identify a process but not an individual service in a shared host.
+An owner-module table row can resolve that service only for the same process
+generation. Enrichment preserves the observed socket endpoint ID, so closing and
+rebinding a UDP port in the same service still invalidates the old association.
+A port-mask non-match retains its known process identity too: otherwise a service
+rule combined with a standalone port rule could misclassify unrelated traffic
+from that host as unresolved and block it after the attribution wait.
 
 The four outcomes are deliberately distinct:
 
@@ -452,8 +478,17 @@ Its dedicated worker copies endpoint ID, PID, addresses, ports and QPC timestamp
 into a bounded ingress queue. `ParentEndpointId` is not process ancestry.
 
 `RouteSocketHistory` keeps close tombstones for reordered delivery and ten seconds
-of closed history. Process exits also bound socket lifetimes. Its 65536-record cap
-prevents unbounded growth. `RouteProcessDecisions` associates each socket event
+of closed history. Repeated observations of the same live endpoint are coalesced;
+a UDP bind already covers subsequent peer authorizations on that endpoint.
+Process exits also bound socket lifetimes. Once per second, `RouteSocketPresence`
+indexes the complete owner tables already read by attribution. An open record
+absent from those tables for more than ten seconds is retired, so missed close
+notifications from a still-running process do not accumulate forever. A present
+socket has no age limit. Reconciliation matches PID, protocol, local endpoint
+and TCP peer; wildcard binds and scopeless IPv6 event addresses are supported.
+Recent closes, historical process generations and distinct shared sockets remain
+separate. The 65536-record emergency cap is retained, with record/endpoint counts
+in its diagnostic. `RouteProcessDecisions` associates each socket event
 with the process generation alive at that timestamp. The immutable socket index
 groups by protocol/local port and then checks address, remote tuple and lifetime.
 IPv6 scope comparison uses address bytes because SOCKET metadata has no scope.
@@ -597,12 +632,32 @@ sessions; NETWORK has no socket ID, so correlation remains asynchronous.
 
 `RouteFlowOwner` checks the current immutable ownership index for replies,
 including process creation time, target identity and endpoint ID. A snapshot
-older than 500 ms suppresses that reply and requests a coalesced background
-refresh, without permanently invalidating the association. A fresh snapshot
-confirming the same owner permits subsequent replies on the existing association.
-Stale replies are dropped, not buffered for later delivery.
+older than 500 ms triggers a coalesced background refresh. The receive worker
+holds the reply in its existing 65,535-byte buffer and waits up to 500 ms for
+fresh confirmation of the same owner. This local wait budget does not depend on
+network round-trip time and is not restarted by another stale snapshot.
 
-A fresh mismatch, including unresolved/shared ownership, permanently invalidates
+`RouteAttributionUpdates` broadcasts publication of each immutable snapshot to
+all waiting replies. Readers capture its next task before checking ownership,
+so publication during a check cannot cause a missed wakeup. Continuations run
+asynchronously; there is no per-reply polling or native ownership query. Fresh
+ownership keeps the existing synchronous delivery path. Cancellation interrupts
+waiting when the session stops or its SOCKS control connection closes.
+
+Only one reply per association is held in managed memory, with no extra copy or
+managed reply queue. Later packets remain in the socket's bounded receive queue
+(`ReceiveBufferSize` requests 64 KiB); bursts can overflow that queue. Sending
+already-attributed packets continues independently. Timeout discards the held
+reply without invalidating the association, allowing subsequent replies to
+recover when ownership becomes fresh. The budget applies to each explicitly
+held reply; it is not an end-to-end age limit on packets still queued by the OS.
+
+A missing service-module lookup for the same observed live endpoint is also
+waitable: preserve the PID generation and WinDivert endpoint ID, but authorize
+no reply until the service resolves. A changed endpoint, changed service,
+shared bind or close tombstone still invalidates the old association.
+
+A fresh mismatch, including other unresolved/shared ownership, permanently invalidates
 the old association. `IsUsable` then excludes it from the session cache, so the
 next freshly attributed outgoing packet can replace it even if the cache key
 matches again. Later evidence cannot revive the invalidated association or
@@ -646,8 +701,14 @@ a rented output buffer, clears all header fields, calculates checksums, injects
 the packet, and returns the buffer before the callback completes. Address writing
 uses spans without temporary address arrays. There is no incremental checksum
 optimization. Pool capacity, framing, in-flight packets and receive buffers remain
-outside the queued-payload budget. Session setup is limited to 15 seconds and idle
-time to 60 seconds. A failed association can be replaced by the next packet.
+outside the queued-payload budget. Session setup is limited to 15 seconds.
+After 60 seconds of inactivity, cleanup checks ownership and retires only an
+invalidated association. A live socket, stale snapshot or temporarily missing
+service name preserves the association: silence alone must not discard a delayed
+reply or change a long-running application's local SOCKS source port. Invalidation
+is terminal, so activity resuming concurrently cannot revive a retired session.
+Completed sessions are removed regardless of idle time. A failed association can
+be replaced by the next packet.
 
 Cleanup removes the exact dictionary key/value it inspected so it cannot remove
 a replacement installed concurrently. A separate task registry retains all live
@@ -713,7 +774,7 @@ even if no further input arrives.
 | WinDivert send/shutdown/close | `_sendGate`; blocking receive is outside the lock. |
 | NAT dictionaries | Short NAT lock; each entry separately owns relay cancellation. |
 | Relay/session lookup and task registries | Concurrent dictionaries with exact-entry removal. |
-| UDP ownership validity | Fresh mismatches latch invalidation under `RouteFlowOwner` lock; stale evidence only suppresses delivery and requests refresh. |
+| UDP ownership validity | Fresh mismatches latch invalidation under `RouteFlowOwner` lock; stale evidence waits outside the lock for snapshot publication, with a fixed per-reply deadline. |
 | Shared timestamps and NAT flags | Interlocked long accesses and volatile flags, including x86. |
 
 UDP validity callbacks never take the packet lock: they read immutable policy
@@ -730,15 +791,20 @@ directly. Fatal capture/listener/maintenance/attribution errors complete the eng
 failure task and stop its workers. Capture closes the handle in `finally`, avoiding
 an unserviced interceptor blocking the host indefinitely.
 
-The manager exposes `Stopped`, `Starting`, `Running`, `Stopping` and `Faulted`.
-It watches engine completion and every active isolated core's exit task. An
-unexpected exit takes the lifecycle semaphore, verifies the watched generation,
-drains the runtime, releases the lease, marks faulted and reports through normal
-v2rayN notifications. There is no automatic restart loop. Superseded observers
-are cancelled and generation-checked; intentional retirement cannot stop the new
-runtime. The persisted enabled preference remains intact for the next launch.
-`IsRunning` includes startup/resource ownership for the TUN exclusion check;
-`IsEnabled` reflects the manager's committed running state.
+The manager watches engine completion and the routing core's exit task. On failure,
+it reports recovery in the main log and retries after 1, 2, 4, 8, 16 and then
+30 seconds, keeping that maximum interval until recovery succeeds. A runtime that
+survives at least a minute resets the backoff. Each attempt takes the lifecycle
+semaphore, checks the watched generation and rebuilds the runtime using its last
+committed plan. Failed attempts release newly acquired resources and retain the
+plan for another retry. The semaphore is not held during backoff. Explicit stop
+clears the plan; stop/exit cancels in-progress preparation as well as the watcher.
+Superseded watchers cannot retire a newer generation. The saved enabled preference
+is never cleared by recovery. `IsRunning` includes startup/resource ownership
+and the live supervisor task, including retry backoff, for the TUN exclusion
+check. A failed restart must not let TUN activate before the next retry restarts
+capture. Recovery can interrupt connections and is not a
+firewall guarantee during intervals when the capture handle is closed.
 
 Stop cancels preparation, cancels the current observer and drains the engine
 before retiring cores. Engine disposal stops producers and awaits worker tasks
@@ -797,15 +863,18 @@ cover these boundaries:
 | `ProcessTreeTests.cs`, `PackageRuleTests.cs` | Process/package ancestry, exited parents, recycled PIDs, excluded subtrees, missing identities and native read-only process timing. |
 | `ProcessEventDecoderTests.cs` | Binary ETW schemas, variable-length SIDs, exact FILETIMEs, package identity, truncation and unknown-version rejection. |
 | `EventAttributionTests.cs` | Delayed short-lived ancestry, sequence matching, historical PID/socket ownership, shared binds, lifecycle gaps, queue overflow, observer failure/health-check races, native metadata and path normalization. |
+| `SocketHistoryTests.cs` | Repeated authorizations, many UDP peers, simulated twelve-hour missing-close churn, live endpoint preservation, transient table gaps and reconciliation identity checks. |
 | `OwnerTableTests.cs` | Real dual-stack TCP/UDP owner tables parsed into the production index. |
 | `AttributionTests.cs` | Indexed lookup cost, ownership changes, bounded deferral, selective TCP retirement and native socket closure. |
-| `RuntimeTests.cs` | Staging/reuse, rollback, cancellation at commitment, failure observation, empty-policy shutdown and release of every owned resource after cleanup failure. |
+| `RuntimeTests.cs` | Staging/reuse, rollback, cancellation at commitment, failure observation, automatic recovery, empty-policy shutdown, committed replacement after retirement failure and release of every owned resource after cleanup failure. |
+| `ServiceRuleTests.cs` | Shared-host module identity, process generations, UDP socket reuse after service enrichment and bypass of unrelated traffic when service and standalone port rules coexist. |
 | `PacketTests.cs` | Native address layout, IPv4/IPv6 bounds and rewriting, scope, NAT collisions, and SYN/reconnect handling. |
 | `PacketBatchTests.cs` | Mixed IP framing, metadata alignment, maximum packet size, bounded flushing, owned output, and no replay after injection failure. |
 | `FragmentTests.cs` | Out-of-order assembly, early unselected bypass, policy invalidation, SYN/reflection exceptions, overlap and expiry. |
 | `SocksTests.cs` | Internal endpoint authentication, split replies, domain bind replies, IPv6, framing, and failed-method behavior. |
 | `UdpSessionTests.cs` | Byte budget and release, pooled buffer ownership on send/rejection/cancellation/failure, exact wire/reply payloads from empty through large datagrams, queued ownership, sends after process exit with discarded replies, stale/reused owners, multi-peer association identity, actual reply peers, domain relay endpoints, and internal endpoint preparation. |
 | `UdpRecoveryTests.cs` | Stale-snapshot recovery without replacing the association, terminal owner/PID/endpoint/rule changes, and IPv4/IPv6 SOCKS datagram exchanges that replace invalidated sessions and preserve source endpoints and payloads. |
+| `UdpReplyWaitTests.cs` | Snapshot broadcast and publication races, bounded waiting despite repeated stale updates, changed ownership during waiting, and cancellation by session or SOCKS control closure. |
 | `ShutdownTests.cs` | Accept reset/abort recovery, fatal listener shutdown, cancellation during handshake stages, and late task registration during disposal. |
 
 `RouteTestFactory` builds the production shared policy for attribution tests;

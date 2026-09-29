@@ -5,6 +5,34 @@ namespace ServiceLib.Tests.AppRouting;
 
 public class SharedRoutingTests
 {
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task PrivateCoreKeepsQuietConnectionsWithoutChangingOtherPolicySettings(bool fileCore, bool existingPolicy)
+    {
+        var shared = new RouteSharedRules(Routing());
+        const string json = """
+            {"policy":{"system":{"statsOutboundDownlink":true},"levels":{"0":{"handshake":15,"bufferSize":64},"1":{"connIdle":120}}},
+             "routing":{"rules":[{"type":"field","outboundTag":"direct"}]}}
+            """;
+        var input = JsonNode.Parse(json)!.AsObject();
+        if (!existingPolicy) { input.Remove("policy"); }
+        var template = new RouteSharedTemplate(input.ToJsonString(), shared);
+        var config = fileCore ? JsonNode.Parse(template.ConfigFor([], "identity"))! : template.Root;
+        // Xray's default is 300 seconds. A private transparent relay must instead
+        // leave the quiet application's connected socket in control of its lifetime.
+        await (config["policy"]!["levels"]!["0"]!["connIdle"]?.GetValue<int>() ?? 300).Should().BeGreaterThan(31_536_000);
+        if (existingPolicy)
+        {
+            await config["policy"]!["levels"]!["0"]!["handshake"]!.GetValue<int>().Should().BeEqualTo(15);
+            await config["policy"]!["levels"]!["0"]!["bufferSize"]!.GetValue<int>().Should().BeEqualTo(64);
+            await config["policy"]!["levels"]!["1"]!["connIdle"]!.GetValue<int>().Should().BeEqualTo(120);
+            await config["policy"]!["system"]!["statsOutboundDownlink"]!.GetValue<bool>().Should().BeTrue();
+        }
+    }
+
     private static RoutingItem Routing(params RulesItem[] rules) => new() { RuleSet = JsonUtils.Serialize(rules) };
     private static RulesItem App(RoutingSelector selector, string value, bool children = false, string outbound = "direct") => new()
     {

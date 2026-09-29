@@ -7,11 +7,14 @@ public sealed class AppRoutingManager
     public static AppRoutingManager Instance { get; } = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly RouteRuntime _runtime;
+    private readonly Func<TimeSpan, CancellationToken, Task> _retryDelay = Task.Delay;
     private CancellationTokenSource? _preparation;
     private CancellationTokenSource? _watch;
+    private volatile Task? _watchTask;
     private volatile bool _shuttingDown;
     private volatile bool _starting;
-    public bool IsRunning => _starting || _runtime.IsRunning;
+    // Recovery still owns this mode during backoff, even without a live engine.
+    public bool IsRunning => _starting || _runtime.IsRunning || _watchTask is { IsCompleted: false };
     private string? _lastError;
     private RouteInterfaceMonitor? _interfaces;
     internal RouteInterfaceMonitor Interfaces => _interfaces ??= new(AppManager.Instance.Config,
@@ -25,6 +28,12 @@ public sealed class AppRoutingManager
     {
         _runtime = new(() => OperatingSystem.IsWindows() ? new AppRouteEngine(Report, () => Interfaces.Policy) : throw new PlatformNotSupportedException(),
             () => OperatingSystem.IsWindows() ? new RouteCaptureLease() : throw new PlatformNotSupportedException());
+    }
+
+    internal AppRoutingManager(RouteRuntime runtime, Func<TimeSpan, CancellationToken, Task>? retryDelay = null)
+    {
+        _runtime = runtime;
+        if (retryDelay != null) { _retryDelay = retryDelay; }
     }
 
     internal static bool IsProtectedExecutable(string executable) =>
@@ -59,7 +68,7 @@ public sealed class AppRoutingManager
             if (_shuttingDown || !config.AppRouting.Enabled) { return; }
             await _runtime.ApplyAsync(plan, _preparation.Token);
             _lastError = null;
-            if (_runtime.IsRunning) { WatchRuntime(); }
+            if (_runtime.IsRunning) { _ = WatchRuntime(config); }
             else { _watch?.Cancel(); }
         }
         finally
@@ -103,27 +112,61 @@ public sealed class AppRoutingManager
 
     public Task RefreshAsync(Config config) => config.AppRouting.Enabled ? StartAsync(config) : StopAsync();
 
-    private void WatchRuntime()
+    internal Task WatchRuntime(Config config)
     {
         _watch?.Cancel();
         _watch?.Dispose();
         _watch = new CancellationTokenSource();
-        _ = ObserveRuntime(_runtime.Generation, _runtime.WaitForFailureAsync(_watch.Token), _watch.Token);
+        return _watchTask = ObserveRuntime(config, _runtime.Generation, _runtime.WaitForFailureAsync(_watch.Token), _watch.Token);
     }
 
-    private async Task ObserveRuntime(long generation, Task<Exception?> failure, CancellationToken token)
+    private async Task ObserveRuntime(Config config, long generation, Task<Exception?> failure, CancellationToken token)
     {
         try
         {
             var error = await failure;
-            await _gate.WaitAsync(token);
-            try
+            var retrySeconds = 1;
+            while (!token.IsCancellationRequested)
             {
-                if (generation != _runtime.Generation) { return; }
-                await _runtime.StopAsync();
-                Report("Application routing stopped: " + (error?.Message ?? "The capture engine stopped unexpectedly."));
+                Report($"Application routing is recovering; retrying in {retrySeconds} seconds: " +
+                    (error?.Message ?? "The capture engine stopped unexpectedly."));
+                await _retryDelay(TimeSpan.FromSeconds(retrySeconds), token);
+                retrySeconds = Math.Min(retrySeconds * 2, 30);
+                var recovered = false;
+                await _gate.WaitAsync(token);
+                try
+                {
+                    if (generation != _runtime.Generation || _shuttingDown || !config.AppRouting.Enabled) { return; }
+                    _starting = true;
+                    _preparation = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    try
+                    {
+                        await _runtime.RestartAsync(_preparation.Token);
+                        const string message = "Application routing recovered after a runtime failure. Existing connections may need to reconnect.";
+                        Logging.SaveLog(message);
+                        NoticeManager.Instance.SendMessageEx(message);
+                        _lastError = null;
+                        failure = _runtime.WaitForFailureAsync(token);
+                        recovered = true;
+                    }
+                    catch (OperationCanceledException) when (_preparation.IsCancellationRequested) { return; }
+                    catch (Exception ex) { Logging.SaveLog("AppRouting recovery", ex); error = ex; }
+                    finally
+                    {
+                        generation = _runtime.Generation;
+                        _preparation.Dispose();
+                        _preparation = null;
+                        _starting = false;
+                    }
+                }
+                finally { _gate.Release(); }
+                if (recovered)
+                {
+                    var started = Environment.TickCount64;
+                    error = await failure;
+                    if (Environment.TickCount64 - started >= 60_000) { retrySeconds = 1; }
+                }
             }
-            finally { _gate.Release(); }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex) { Logging.SaveLog("AppRouting supervision", ex); }

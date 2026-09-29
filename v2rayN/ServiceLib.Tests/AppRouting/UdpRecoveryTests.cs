@@ -64,7 +64,7 @@ public class UdpRecoveryTests
     [Arguments(true, false)]
     [Arguments(false, true)]
     [Arguments(true, true)]
-    public async Task UdpRepliesRecoverAfterStaleAttributionAndRetireAfterOwnershipChange(bool ipv6, bool invalidate)
+    public async Task UdpRepliesWaitForFreshAttributionAndRetireAfterOwnershipChange(bool ipv6, bool invalidate)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         using var tcp = new TcpListener(IPAddress.Loopback, 0);
@@ -76,6 +76,9 @@ public class UdpRecoveryTests
         RouteDecision? current = selected;
         var owner = new RouteFlowOwner(selected, () => Volatile.Read(ref current));
         var rejected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sentWhileWaiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var updates = new RouteAttributionUpdates();
         var replies = Channel.CreateUnbounded<byte[]>();
         var errors = new ConcurrentQueue<Exception>();
         var pool = new TrackingBytePool();
@@ -92,7 +95,7 @@ public class UdpRecoveryTests
                 await stream.WriteAsync(new byte[] { 5, 0, 0 }.Concat(RouteConnector.EncodeAddress((IPEndPoint)udp.Client.LocalEndPoint!)).ToArray(), timeout.Token);
                 // The expected exchange count gates teardown: no terminator packet
                 // can be lost when ownership changes or the association is cancelled.
-                var packets = invalidate ? association == 0 ? 2 : 100 : 102;
+                var packets = invalidate ? association == 0 ? 2 : 100 : 103;
                 IPEndPoint? source = null;
                 for (var i = 0; i < packets; i++)
                 {
@@ -102,6 +105,7 @@ public class UdpRecoveryTests
                     var offset = RouteConnector.UnwrapDatagram(datagram.Buffer, destination);
                     await (offset >= 0).Should().BeTrue();
                     await udp.SendAsync(datagram.Buffer, source, timeout.Token);
+                    if (!invalidate && i == 2) { sentWhileWaiting.TrySetResult(); }
                 }
                 associationSources.Add(source!);
                 try { await (await stream.ReadAsync(new byte[1], timeout.Token)).Should().BeEqualTo(0); }
@@ -112,7 +116,8 @@ public class UdpRecoveryTests
         RouteUdpSession Create(RouteFlowOwner lifetime) => new(target, destination,
             (_, bytes) => replies.Writer.TryWrite(bytes.ToArray()), timeout.Token, errors.Enqueue,
             () => { var valid = lifetime.IsCurrent(); if (!valid) { rejected.TrySetResult(); } return valid; },
-            pool, canSend: () => true, canReuse: () => !lifetime.IsInvalidated);
+            pool, canSend: () => true, canReuse: () => !lifetime.IsInvalidated,
+            waitForOwner: token => lifetime.WaitForCurrentAsync(updates, () => refreshRequested.TrySetResult(), token));
         var session = Create(owner);
         async Task RoundTrip(byte value, int size)
         {
@@ -130,13 +135,28 @@ public class UdpRecoveryTests
             await rejected.Task.WaitAsync(timeout.Token);
             await replies.Reader.TryRead(out _).Should().BeFalse();
             await session.IsUsable.Should().BeEqualTo(!invalidate);
+            if (!invalidate)
+            {
+                await refreshRequested.Task.WaitAsync(timeout.Token);
+                session.Send(destination, [3]);
+                await sentWhileWaiting.Task.WaitAsync(timeout.Token);
+                await replies.Reader.TryRead(out _).Should().BeFalse();
+            }
             Volatile.Write(ref current, selected);
+            updates.Publish();
             if (invalidate)
             {
                 await session.IsUsable.Should().BeFalse();
                 session.Dispose();
                 await session.Completion.WaitAsync(timeout.Token);
                 session = Create(new RouteFlowOwner(selected, () => Volatile.Read(ref current)));
+            }
+            else
+            {
+                // The original reply survives the stale snapshot without a resend.
+                // Subsequent traffic stayed in the bounded socket queue, in order.
+                await (await replies.Reader.ReadAsync(timeout.Token)).SequenceEqual(new byte[] { 2 }).Should().BeTrue();
+                await (await replies.Reader.ReadAsync(timeout.Token)).SequenceEqual(new byte[] { 3 }).Should().BeTrue();
             }
             // Keepalive-sized and data-sized packets keep the same association after recovery.
             for (var i = 0; i < 100; i++) { await RoundTrip((byte)(3 + i), i % 2 == 0 ? 48 : 1400); }

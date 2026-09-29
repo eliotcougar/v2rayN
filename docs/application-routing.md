@@ -163,11 +163,16 @@ Restart the target app after enabling routing or editing rules; observed ancestr
 is retained when rules are reapplied. This follows Windows parent-process
 relationships, not application/package membership. ETW and socket delivery are
 asynchronous: unresolved traffic still has the existing 250 ms bounded wait.
-Observer failure, reported ETW event loss or managed queue overflow stops routing
-with an error instead of silently continuing with incomplete history. Observer
-errors identify the process/socket observer and include the underlying cause;
+Observer failure, reported ETW event loss or managed queue overflow retires the
+failed runtime instead of continuing with incomplete history. Automatic recovery
+rebuilds the observers, capture engine and routing core, with retries spaced from
+one second to at most 30 seconds. The enabled preference is preserved; disabling
+routing, changing its active policy or exiting cancels the superseded recovery.
+TUN remains unavailable during recovery, including the delay between attempts.
+Observer errors identify the process/socket observer and include the underlying cause;
 the normal application log also records the full exception chain. This is
-not a firewall: after routing stops, normal Windows routing resumes.
+not a firewall: while capture is stopped, including during recovery, normal
+Windows routing resumes. Existing connections may need to reconnect.
 
 ### Destinations
 
@@ -205,6 +210,12 @@ Intercepted traffic can show a destination IP rather than a hostname, including
 Windows Time requests to UDP port 123. Application-routing failures appear in the
 main log panel instead of popup notifications; `guiLogs` retains diagnostics.
 
+The private routing core uses a practically unlimited connection-idle timeout
+for its default user level, so quiet TCP sessions are not closed by Xray's normal
+five-minute idle policy. Application close, connection errors and routing changes
+still end connections. This does not change the main core's configuration or
+override timeouts imposed by remote proxies and servers.
+
 ## Scope and limitations
 
 - This is outbound TCP/UDP application routing, not a firewall or kill switch.
@@ -221,12 +232,19 @@ main log panel instead of popup notifications; `guiLogs` retains diagnostics.
   sequence numbers distinguish a reconnect from a retransmitted SYN while the
   previous relay is still closing.
   UDP capture and reply delivery check the latest ownership index. A stale
-  snapshot suppresses a reply and requests refresh; subsequent replies resume
-  on the same association when fresh evidence confirms the original owner.
+  snapshot holds one reply in the association's existing receive buffer for up
+  to 500 ms while requesting refresh. A fresh snapshot confirming the original
+  owner allows delivery of that held reply. The wait limits local ownership
+  refresh latency, not network round-trip time. Further replies remain in the
+  socket's bounded receive queue (64 KiB requested); overflow can still lose UDP
+  packets. Timeout drops the held reply without invalidating the association.
+  A temporarily missing service name on the same observed live socket also waits
+  for confirmation; it does not permanently discard the association.
   A fresh ownership mismatch permanently invalidates the old association.
   Failed or invalidated associations can be replaced on the next attributed
   datagram, even if the same endpoint is selected again.
-  Missing or stale ownership is held for up to 250 ms on retries, within a
+  Captured outbound packets with missing or stale ownership are held for up to
+  250 ms on retries, within a
   512-packet/4 MiB budget, then dropped with a throttled notice. It is not treated
   as a proven unselected application; under load or inaccessible ownership, this
   can also drop otherwise unselected traffic.
@@ -246,15 +264,18 @@ main log panel instead of popup notifications; `guiLogs` retains diagnostics.
   or IP families can still have multiple sessions; this is not a kernel socket ID.
 - Relay connections are bounded to 2048 TCP and 2048 UDP sessions. UDP queues
   hold at most 64 datagrams and 64 KiB of payload per session, and drop excess
-  traffic without blocking packet capture; idle UDP sessions expire
-  after 60 seconds. These limits protect memory and do not promise zero loss.
+  traffic without blocking packet capture. After 60 seconds of inactivity,
+  cleanup retires UDP associations only when ownership has been invalidated;
+  a quiet live socket keeps its association. These limits protect memory and
+  do not promise zero loss. Xray, remote proxies and network NATs have their own
+  UDP idle timeouts; keeping the local association does not override them.
   A datagram that exceeds the outbound socket's size limit is dropped and reported
   without closing its UDP association. SOCKS framing reduces the available payload
   size; application datagrams are not split into SOCKS5 fragments.
   Connection resets during TCP accept are recoverable; a fatal capture/listener
   or maintenance-worker failure, or an unexpected isolated Xray exit, stops and
-  cleans up the runtime and reports the error. There is no automatic retry loop;
-  the saved enabled preference remains intact for the next launch.
+  cleans up the runtime and reports the error. The supervisor automatically
+  rebuilds it with bounded retry frequency, retaining the enabled preference.
 - ICMP, raw IP protocols, inbound servers and multicast/broadcast discovery
   are outside the supported application-routing scope. Service rules can select
   a service with a dedicated process directly. For a process shared by several
