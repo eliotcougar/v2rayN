@@ -69,14 +69,13 @@ public partial class StatusBarView
                 interaction.SetOutput(RxVoid.Default);
             }).DisposeWith(disposables);
 
-            ViewModel.DispatcherRefreshIconInteraction.RegisterHandler(interaction =>
-            {
-                Application.Current?.Dispatcher.Invoke(async () => await RefreshIcon(), DispatcherPriority.Normal);
-                interaction.SetOutput(RxVoid.Default);
-            }).DisposeWith(disposables);
+            // Read current state on activation; startup does not wait for this view.
+            ViewModel.RefreshIconRequested.AsObservable()
+                .Prepend(RxVoid.Default)
+                .ObserveOn(RxSchedulers.MainThreadScheduler)
+                .SubscribeAsync(async _ => await RefreshIcon())
+                .DisposeWith(disposables);
         });
-
-        _ = RefreshIcon();
     }
 
     private async Task RefreshIcon()

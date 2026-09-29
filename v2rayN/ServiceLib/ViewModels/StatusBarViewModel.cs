@@ -4,7 +4,7 @@ public partial class StatusBarViewModel : MyReactiveObject
 {
     public Interaction<string, RxVoid> SetClipboardDataInteraction { get; } = new();
     public Interaction<RxVoid, string?> PasswordInputInteraction { get; } = new();
-    public Interaction<RxVoid, RxVoid> DispatcherRefreshIconInteraction { get; } = new();
+    public EventChannel<RxVoid> RefreshIconRequested { get; } = new();
     public EventChannel<bool> SubscriptionsUpdateRequested { get; } = new();
     public EventChannel<bool?> ShowHideWindowRequested { get; } = new();
 
@@ -384,7 +384,7 @@ public partial class StatusBarViewModel : MyReactiveObject
 
         if (blChange)
         {
-            await DispatcherRefreshIconInteraction.HandleSafe(RxVoid.Default);
+            RefreshIconRequested.Publish();
         }
     }
 
@@ -414,7 +414,7 @@ public partial class StatusBarViewModel : MyReactiveObject
         {
             NoticeManager.Instance.SendMessageEx(ResUI.TipChangeRouting);
             ReloadRequested.Publish();
-            await DispatcherRefreshIconInteraction.HandleSafe(RxVoid.Default);
+            RefreshIconRequested.Publish();
         }
     }
 

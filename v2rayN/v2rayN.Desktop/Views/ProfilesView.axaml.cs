@@ -135,11 +135,11 @@ public partial class ProfilesView : ReactiveUserControl<ProfilesViewModel>
                 interaction.SetOutput(RxVoid.Default);
             }).DisposeWith(disposables);
 
-            ViewModel.DispatcherRefreshServersBizInteraction.RegisterHandler(interaction =>
-            {
-                Dispatcher.UIThread.Post(RefreshServersBiz, DispatcherPriority.Default);
-                interaction.SetOutput(RxVoid.Default);
-            }).DisposeWith(disposables);
+            // Startup may populate the list before this view is attached.
+            ViewModel.ScrollIntoViewRequested.AsObservable()
+                .Prepend(RxVoid.Default)
+                .Subscribe(_ => Dispatcher.UIThread.Post(RefreshServersBiz, DispatcherPriority.Default))
+                .DisposeWith(disposables);
 
             ViewModel.AdjustMainLvColWidthInteraction.RegisterHandler(interaction =>
             {

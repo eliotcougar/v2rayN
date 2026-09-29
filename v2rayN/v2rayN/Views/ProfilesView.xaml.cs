@@ -132,11 +132,12 @@ public partial class ProfilesView
                 interaction.SetOutput(RxVoid.Default);
             }).DisposeWith(disposables);
 
-            ViewModel.DispatcherRefreshServersBizInteraction.RegisterHandler(interaction =>
-            {
-                Application.Current?.Dispatcher.Invoke(RefreshServersBiz, DispatcherPriority.Normal);
-                interaction.SetOutput(RxVoid.Default);
-            }).DisposeWith(disposables);
+            // Startup may populate the list before this view is attached.
+            ViewModel.ScrollIntoViewRequested.AsObservable()
+                .Prepend(RxVoid.Default)
+                .ObserveOn(RxSchedulers.MainThreadScheduler)
+                .Subscribe(_ => RefreshServersBiz())
+                .DisposeWith(disposables);
 
             ViewModel.AdjustMainLvColWidthInteraction.RegisterHandler(interaction =>
             {

@@ -43,11 +43,11 @@ public partial class StatusBarView : ReactiveUserControl<StatusBarViewModel>
                 interaction.SetOutput(result);
             }).DisposeWith(disposables);
 
-            ViewModel.DispatcherRefreshIconInteraction.RegisterHandler(interaction =>
-            {
-                Dispatcher.UIThread.Post(RefreshIcon, DispatcherPriority.Default);
-                interaction.SetOutput(RxVoid.Default);
-            }).DisposeWith(disposables);
+            // Read current state on activation; startup does not wait for this view.
+            ViewModel.RefreshIconRequested.AsObservable()
+                .Prepend(RxVoid.Default)
+                .Subscribe(_ => Dispatcher.UIThread.Post(RefreshIcon, DispatcherPriority.Default))
+                .DisposeWith(disposables);
         });
 
         //spEnableTun.IsVisible = (Utils.IsWindows() || AppHandler.Instance.IsAdministrator);
@@ -56,19 +56,20 @@ public partial class StatusBarView : ReactiveUserControl<StatusBarViewModel>
         {
             cmbSystemProxy.Items.RemoveAt(cmbSystemProxy.Items.Count - 1);
         }
-
-        // Because this view has not yet been initialized when DispatcherRefreshIconInteraction is first called.
-        RefreshIcon();
     }
 
     private void RefreshIcon()
     {
-        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
         {
-            desktop.MainWindow.Icon = AvaUtils.GetAppIcon(_config.SystemProxyItem.SysProxyType);
-            var iconslist = TrayIcon.GetIcons(Application.Current);
-            iconslist[0].Icon = desktop.MainWindow.Icon;
-            TrayIcon.SetIcons(Application.Current, iconslist);
+            mainWindow.Icon = AvaUtils.GetAppIcon(_config.SystemProxyItem.SysProxyType);
+            if (TrayIcon.GetIcons(Application.Current) is { } icons)
+            {
+                foreach (var icon in icons)
+                {
+                    icon.Icon = mainWindow.Icon;
+                }
+            }
         }
     }
 

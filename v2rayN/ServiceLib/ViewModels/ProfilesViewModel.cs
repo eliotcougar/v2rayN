@@ -7,11 +7,11 @@ public partial class ProfilesViewModel : MyReactiveObject
     public Interaction<string, RxVoid> SetClipboardDataInteraction { get; } = new();
     public Interaction<RxVoid, RxVoid> ProfilesFocusInteraction { get; } = new();
     public Interaction<string, RxVoid> ShareServerInteraction { get; } = new();
-    public Interaction<RxVoid, RxVoid> DispatcherRefreshServersBizInteraction { get; } = new();
     public Interaction<RxVoid, RxVoid> AdjustMainLvColWidthInteraction { get; } = new();
 
     public EventChannel<RxVoid> ReloadRequested { get; } = new();
     public EventChannel<RxVoid> RefreshServersRequested { get; } = new();
+    public EventChannel<RxVoid> ScrollIntoViewRequested { get; } = new();
 
     #region private prop
 
@@ -375,7 +375,7 @@ public partial class ProfilesViewModel : MyReactiveObject
             SelectedProfile = selected ?? lstModel.First();
         }
 
-        await DispatcherRefreshServersBizInteraction.HandleSafe(RxVoid.Default);
+        ScrollIntoViewRequested.Publish();
     }
 
     public async Task RefreshSubscriptions()
