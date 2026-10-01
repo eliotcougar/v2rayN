@@ -230,7 +230,7 @@ public class InterfaceTests
         InitializeEngine(engine);
         await first.Closed.Should().BeTrue();
         await second.Closed.Should().BeFalse();
-        await (nat.Find(first.Flow) == null).Should().BeTrue();
+        await ReferenceEquals(nat.Find(first.Flow), first).Should().BeTrue(); // Closed tombstone resets late application packets.
         await ReferenceEquals(nat.Reverse(first.Flow.LocalAddress, first.Flow.RemoteAddress, first.TranslatedPort), first).Should().BeTrue();
         await nat.MayBeReflection(first.Flow.LocalAddress, first.Flow.RemoteAddress).Should().BeTrue();
     }
@@ -335,29 +335,29 @@ public class InterfaceTests
         await pending.Dequeue().Address.InterfaceIndex.Should().BeEqualTo(2u);
     }
 
-    private static T Field<T>(AppRouteEngine engine, string name) =>
+    internal static T Field<T>(AppRouteEngine engine, string name) =>
         (T)typeof(AppRouteEngine).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
 
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task InterfaceChangePreservesOtherAdaptersFragmentBypass(bool ipv6)
+    public async Task InterfaceChangePreservesOtherAdaptersPendingFragments(bool ipv6)
     {
         var bytes = Packet(ipv6, false, 32);
         var first = FragmentTests.Fragment(bytes, 0, 16, true);
         var last = FragmentTests.Fragment(bytes, 16, 24, false);
-        var buffer = new RouteFragmentBuffer(_ => RouteDecisionKind.Unselected);
+        var buffer = new RouteFragmentBuffer();
         buffer.Add(first, new() { InterfaceIndex = 1 }, out _);
         buffer.Add(first, new() { InterfaceIndex = 2 }, out _);
         buffer.RetainInterfaces((index, _) => index == 2);
         buffer.Add(last, new() { InterfaceIndex = 1 }, out var retired);
         buffer.Add(last, new() { InterfaceIndex = 2 }, out var retained);
         await (retired == null).Should().BeTrue();
-        await retained!.PassThrough.Should().BeTrue();
-        await retained.Originals.Single().Packet.SequenceEqual(last).Should().BeTrue();
+        await retained!.PassThrough.Should().BeFalse();
+        await retained.Packet.SequenceEqual(bytes).Should().BeTrue();
     }
 
-    private static void InitializeEngine(AppRouteEngine engine)
+    internal static void InitializeEngine(AppRouteEngine engine)
     {
         typeof(AppRouteEngine).GetMethod("RefreshInterfaces", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(engine, null);
         var ports = Field<Dictionary<AddressFamily, ushort>>(engine, "_ports");
@@ -365,7 +365,7 @@ public class InterfaceTests
         ports[AddressFamily.InterNetworkV6] = 60001;
     }
 
-    private static void Capture(AppRouteEngine engine, byte[] packet, DivertAddress address, RoutePacketBatch output) =>
+    internal static void Capture(AppRouteEngine engine, byte[] packet, DivertAddress address, RoutePacketBatch output) =>
         typeof(AppRouteEngine).GetMethod("ProcessCapturedPacket", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(engine, [(Memory<byte>)packet, address, output]);
 }

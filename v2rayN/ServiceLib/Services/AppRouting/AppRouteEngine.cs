@@ -36,6 +36,7 @@ internal sealed class AppRouteEngine : IRouteEngine
     private long _connectionId;
     private long _lastError;
     private int _waitingForOwner;
+    private int _stopping;
     public Task<Exception?> Completion => _completion.Task;
 
     public AppRouteEngine(Action<string> error,
@@ -44,8 +45,10 @@ internal sealed class AppRouteEngine : IRouteEngine
         _routing = new(new(null, []), new([], [], _ => RouteDecision.Unresolved, 0));
         _error = error;
         _getInterfaces = interfaces ?? (() => RouteInterfacePolicy.All);
-        _fragments = new(ClassifyFragment, (address, protocol, local, remote) =>
-            !Monitors(address, local.AddressFamily) && (protocol != 6 || !_nat.MayBeReflection(local, remote)));
+        _fragments = new((address, protocol, local, remote) =>
+            (!Monitors(address, local.AddressFamily) || _interfaces.BypassesLocalTraffic(address.InterfaceIndex, remote)) &&
+            // Destination Options can conceal a TCP header until reassembly.
+            (protocol is not (6 or 60) || !_nat.MayBeReflection(local, remote)));
     }
 
     private bool Monitors(DivertAddress address, AddressFamily family) =>
@@ -64,22 +67,13 @@ internal sealed class AppRouteEngine : IRouteEngine
             var packet = _pending.Dequeue();
             if (Retain(packet.Address.InterfaceIndex, packet.Bytes[0] >> 4 == 6)) { _pending.Add(packet); }
         }
-        _nat.Retain(_routing.Policy, e => next.Retains(previous, e.OriginalAddress.InterfaceIndex,
-            e.Flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6));
+        ResetTcpConnections(_nat.Retain(_routing.Policy, e => next.Retains(previous, e.OriginalAddress.InterfaceIndex,
+            e.Flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6)));
         foreach (var pair in _udp.Where(p => !next.Retains(previous, p.Key.Interface,
                      p.Key.Local.AddressFamily == AddressFamily.InterNetworkV6)).ToArray())
         {
             if (_udp.TryRemove(pair)) { pair.Value.Dispose(); }
         }
-    }
-
-    internal RouteDecisionKind ClassifyFragment(RouteFlow flow)
-    {
-        // Reflected listener packets belong to this process, but must still pass
-        // through reverse NAT. Existing selected streams keep their chosen route.
-        if (flow.Protocol == 6 && (_ports.Values.Contains(flow.LocalPort) || _nat.Find(flow) != null))
-        { return RouteDecisionKind.Selected; }
-        return Match(flow).Kind;
     }
 
     public async Task ApplyAsync(RouteSharedPolicy routes, IEnumerable<int> excludedProcesses, CancellationToken token)
@@ -91,8 +85,7 @@ internal sealed class AppRouteEngine : IRouteEngine
             _stop.Token.ThrowIfCancellationRequested();
             token.ThrowIfCancellationRequested();
             PublishRouting(policy, owners);
-            _fragments.ClearDecisions();
-            _nat.Retain(policy);
+            ResetTcpConnections(_nat.Retain(policy));
             foreach (var pair in _udp.Where(p => !policy.Retains(p.Value.Rule)).ToArray())
             {
                 if (_udp.TryRemove(pair))
@@ -342,10 +335,16 @@ internal sealed class AppRouteEngine : IRouteEngine
                 Send(bytes, address, checksum: true, output);
                 return;
             }
-            if (!Monitors(address, flow.LocalAddress.AddressFamily)) { PassThrough(); return; }
             var entry = _nat.Find(flow, packet.IsTcpSyn ? packet.TcpSequence : null);
+            if (entry?.Retired == true)
+            {
+                ResetTcpPacket(packet, bytes.Span, address, output);
+                return;
+            }
+            if (!Monitors(address, flow.LocalAddress.AddressFamily)) { PassThrough(); return; }
             if (entry == null)
             {
+                if (_interfaces.BypassesLocalTraffic(address.InterfaceIndex, flow)) { PassThrough(); return; }
                 // A new connection can reuse a closed tuple. Require a snapshot
                 // begun after its SYN before choosing the route for the stream.
                 var match = Match(flow, arrived, requireFreshSnapshot: packet.IsTcpSyn, timestamp: address.Timestamp);
@@ -356,15 +355,19 @@ internal sealed class AppRouteEngine : IRouteEngine
                     PassThrough();
                     return;
                 }
-                // Existing connections need an application reconnect; do not leak their remaining packets.
+                // A router restart cannot reconstruct an established TCP stream.
+                // Tell the application to reconnect instead of silently blackholing it.
                 if (!packet.IsTcpSyn)
                 {
+                    ResetTcpPacket(packet, bytes.Span, address, output);
                     return;
                 }
 
                 entry = _nat.GetOrAdd(flow, match.Rule!, packet.TcpSequence);
                 entry.OriginalAddress = address;
             }
+            if ((packet.TcpFlags & 16) != 0)
+            { entry.ClientAcknowledgement = BinaryPrimitives.ReadUInt32BigEndian(bytes.Span[(packet.TransportOffset + 8)..]); }
             entry.LastActivity = Environment.TickCount64;
             packet.Rewrite(bytes.Span, flow.RemoteAddress, entry.TranslatedPort, flow.LocalAddress, listenerPort);
             address.Outbound = false;
@@ -373,7 +376,8 @@ internal sealed class AppRouteEngine : IRouteEngine
         }
         if (flow.Protocol == 17)
         {
-            if (!Monitors(address, flow.LocalAddress.AddressFamily)) { PassThrough(); return; }
+            if (!Monitors(address, flow.LocalAddress.AddressFamily) || _interfaces.BypassesLocalTraffic(address.InterfaceIndex, flow))
+            { PassThrough(); return; }
             var match = Match(flow, timestamp: address.Timestamp);
             if (DeferIfUnresolved(match, flow))
             { return; }
@@ -399,9 +403,7 @@ internal sealed class AppRouteEngine : IRouteEngine
 
                 session = CreateUdpSession(flow, match, address);
                 _udp[key] = session;
-                var id = Interlocked.Increment(ref _connectionId);
-                _sessions[id] = session.Completion;
-                _ = session.Completion.ContinueWith(_ => { _sessions.TryRemove(id, out var ignored); }, TaskScheduler.Default);
+                Track(_sessions, session.Completion);
             }
             var payloadLength = BinaryPrimitives.ReadUInt16BigEndian(bytes.Span[(packet.TransportOffset + 4)..]) - 8;
             session.Send(new(flow.RemoteAddress, flow.RemotePort), bytes.Span.Slice(packet.TransportOffset + 8, payloadLength));
@@ -429,6 +431,28 @@ internal sealed class AppRouteEngine : IRouteEngine
                     replyAddress.InterfaceIndex, flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6),
             canReuse: () => !owner.IsInvalidated,
             waitForOwner: token => owner.WaitForCurrentAsync(_attributionUpdates, RequestRefresh, token));
+    }
+
+    private void ResetTcpPacket(RoutePacket packet, ReadOnlySpan<byte> bytes, DivertAddress address, RoutePacketBatch? output)
+    {
+        var reset = packet.CreateTcpReset(bytes);
+        if (reset == null) { return; }
+        address.Outbound = false;
+        Send(reset, address, checksum: true, output);
+    }
+
+    internal void ResetTcpConnections(IEnumerable<RouteNatEntry> entries, RoutePacketBatch? output = null)
+    {
+        foreach (var entry in entries)
+        {
+            try
+            {
+                var address = entry.OriginalAddress;
+                address.Outbound = false;
+                Send(entry.CreateReset(), address, checksum: true, output);
+            }
+            catch (Exception ex) { Report(ex); } // One failed reset must not prevent the policy cutover.
+        }
     }
 
     private void SendUdpReply(RouteFlow flow, DivertAddress address, ReadOnlySpan<byte> payload)
@@ -499,11 +523,9 @@ internal sealed class AppRouteEngine : IRouteEngine
                         continue;
                     }
                     entry.Accepted = true;
-                    var id = Interlocked.Increment(ref _connectionId);
                     var task = Relay(client, entry);
                     client = null; // Relay now owns the accepted socket.
-                    _connections[id] = task;
-                    _ = task.ContinueWith(_ => { _connections.TryRemove(id, out var ignored); }, TaskScheduler.Default);
+                    Track(_connections, task);
                 }
                 // A peer can cancel while its connection is still in the accept queue.
                 catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted) { }
@@ -512,6 +534,16 @@ internal sealed class AppRouteEngine : IRouteEngine
         }
         catch (Exception ex) when (_stop.IsCancellationRequested && ex is OperationCanceledException or ObjectDisposedException) { }
         catch (Exception ex) { Fail(ex); }
+    }
+
+    private void Track(ConcurrentDictionary<long, Task> tasks, Task task)
+    {
+        var id = Interlocked.Increment(ref _connectionId);
+        tasks[id] = task;
+        // Drain retiring tasks on shutdown, but free completed slots immediately
+        // even when the thread pool is busy. The callback only removes one entry.
+        _ = task.ContinueWith(_ => { tasks.TryRemove(id, out var ignored); }, CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private async Task Relay(Socket client, RouteNatEntry entry)
@@ -554,13 +586,14 @@ internal sealed class AppRouteEngine : IRouteEngine
                 _nat.Expire(Environment.TickCount64);
                 foreach (var pair in _udp)
                 {
-                    if (pair.Value.CanExpire(Environment.TickCount64))
+                    if (pair.Value.CanRetire())
                     {
                         // The capture thread may have replaced this completed session already.
                         if (_udp.TryRemove(pair))
                         {
                             pair.Value.Dispose();
-                            await pair.Value.Completion;
+                            // Track owns the drain. One slow teardown must not
+                            // delay ownership checks for the remaining sessions.
                         }
                     }
                 }
@@ -572,8 +605,8 @@ internal sealed class AppRouteEngine : IRouteEngine
 
     private void Fail(Exception ex)
     {
+        if (!Stop(ex)) { return; }
         Logging.SaveLog("Application routing failure:" + Environment.NewLine + ex);
-        Stop(ex);
         _error("Application routing stopped: " + ex.Message);
     }
 
@@ -601,8 +634,18 @@ internal sealed class AppRouteEngine : IRouteEngine
         }
     }
 
-    private void Stop(Exception? error = null)
+    private bool Stop(Exception? error = null)
     {
+        // Several workers can observe the same shutdown. Only the first one
+        // owns retirement and reports the failure that triggered recovery.
+        if (Interlocked.Exchange(ref _stopping, 1) != 0) { return false; }
+        lock (_packetGate)
+        {
+            // Reset live streams while capture can still inject their original
+            // endpoints; a replacement engine has no sequence/translation state.
+            if (_handle != IntPtr.Zero)
+            { ResetTcpConnections(_nat.Retain(new(null, []))); }
+        }
         _completion.TrySetResult(error);
         _stop.Cancel();
         foreach (var listener in _listeners)
@@ -610,6 +653,7 @@ internal sealed class AppRouteEngine : IRouteEngine
             listener.Dispose();
         }
         StopCapture();
+        return true;
     }
 
     public async ValueTask DisposeAsync()
@@ -640,8 +684,7 @@ internal sealed class AppRouteEngine : IRouteEngine
             }
             _handle = IntPtr.Zero;
         }
-        _attribution.Dispose();
-        _refreshRequest.Dispose();
-        _stop.Dispose();
+        try { _attribution.Dispose(); }
+        finally { _refreshRequest.Dispose(); _stop.Dispose(); }
     }
 }

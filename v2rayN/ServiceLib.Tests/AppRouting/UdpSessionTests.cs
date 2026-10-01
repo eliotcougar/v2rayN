@@ -46,8 +46,7 @@ public class UdpSessionTests
             session.Send(destination, [1]);
             var source = await received.Task.WaitAsync(timeout.Token);
             if (staleSnapshot) { Volatile.Write(ref current, null); }
-            // Advance cleanup's clock, without an actual minute-long test delay.
-            if (session.CanExpire(session.LastActivity + 60_001)) { session.Dispose(); }
+            if (session.CanRetire()) { session.Dispose(); }
             await session.IsUsable.Should().BeTrue();
             Volatile.Write(ref current, selected);
             await udp.SendAsync(RouteConnector.WrapDatagram(destination, [2]), source, timeout.Token);
@@ -56,7 +55,7 @@ public class UdpSessionTests
             await (await replies.Reader.ReadAsync(timeout.Token)).SequenceEqual(new byte[] { 3 }).Should().BeTrue();
             // A closed/reused socket must still release its idle association.
             Volatile.Write(ref current, selected with { Endpoint = 8 });
-            await session.CanExpire(session.LastActivity + 60_001).Should().BeTrue();
+            await session.CanRetire().Should().BeTrue();
             await owner.IsInvalidated.Should().BeTrue();
         }
         finally

@@ -14,6 +14,7 @@ public class SettingsTests
              "InterfaceMonitoring":{"MonitorNewInterfaces":false,"Interfaces":[{"Id":"vpn","Name":"VPN","Monitored":false}]}}
             """)!;
         await config.Enabled.Should().BeTrue();
+        await config.BypassLocalTraffic.Should().BeTrue();
         await config.InterfaceMonitoring.Interfaces.Single().Monitored.Should().BeFalse();
         await config.InterfaceMonitoring.MonitorNewInterfaces.Should().BeFalse();
         await JsonUtils.Serialize(config).Contains("rules", StringComparison.OrdinalIgnoreCase).Should().BeFalse();
@@ -26,12 +27,13 @@ public class SettingsTests
     public async Task EnablementIsOnlyCommittedWithSuccessfulSettingsSave(bool enabled)
     {
         var config = new Config { AppRouting = new() { Enabled = !enabled } };
-        var editor = new AppRoutingSettingsViewModel(config, true, null) { Enabled = enabled };
+        var editor = new AppRoutingSettingsViewModel(config, true, null) { Enabled = enabled, BypassLocalTraffic = false };
         await config.AppRouting.Enabled.Should().BeEqualTo(!enabled);
         string? saved = null;
         await editor.SaveAsync(c => { saved = JsonUtils.Serialize(c); return Task.FromResult(0); });
         await JsonUtils.Deserialize<Config>(saved)!.AppRouting.Enabled.Should().BeEqualTo(enabled);
         await config.AppRouting.Enabled.Should().BeEqualTo(enabled);
+        await JsonUtils.Deserialize<Config>(saved)!.AppRouting.BypassLocalTraffic.Should().BeFalse();
     }
 
     [Test]
@@ -42,26 +44,30 @@ public class SettingsTests
     public async Task FailedSaveRestoresPreferenceAndKeepsEditorDraft(bool enabled, bool throws)
     {
         var config = new Config { AppRouting = new() { Enabled = !enabled } };
-        var editor = new AppRoutingSettingsViewModel(config, true, null) { Enabled = enabled };
+        var editor = new AppRoutingSettingsViewModel(config, true, null) { Enabled = enabled, BypassLocalTraffic = false };
         Task<int> Save(Config _) => throws ? Task.FromException<int>(new IOException("Fixture")) : Task.FromResult(-1);
         if (throws) { await Assert.ThrowsAsync<IOException>(() => editor.SaveAsync(Save)); }
         else { await (await editor.SaveAsync(Save)).Should().BeEqualTo(-1); }
         await config.AppRouting.Enabled.Should().BeEqualTo(!enabled);
         await editor.Enabled.Should().BeEqualTo(enabled);
+        await config.AppRouting.BypassLocalTraffic.Should().BeTrue();
+        await editor.BypassLocalTraffic.Should().BeFalse();
     }
 
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task NonAdministratorSeesSavedStateAndCannotChangeItThroughSave(bool enabled)
+    public async Task NonAdministratorCanEditLocalTrafficPreferenceButCannotChangeEnablement(bool enabled)
     {
         var config = new Config { AppRouting = new() { Enabled = enabled } };
         var editor = new AppRoutingSettingsViewModel(config, false, null);
         await editor.Enabled.Should().BeEqualTo(enabled);
         await editor.CanChangeRouting.Should().BeFalse();
         editor.Enabled = !enabled;
+        editor.BypassLocalTraffic = false;
         await editor.SaveAsync(_ => Task.FromResult(0));
         await config.AppRouting.Enabled.Should().BeEqualTo(enabled);
+        await config.AppRouting.BypassLocalTraffic.Should().BeFalse();
     }
 
     [Test]

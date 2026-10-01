@@ -122,6 +122,35 @@ internal sealed record RoutePacket(RouteFlow Flow, int TransportOffset, int Sour
         BinaryPrimitives.WriteUInt16BigEndian(bytes[TransportOffset..], sourcePort);
         BinaryPrimitives.WriteUInt16BigEndian(bytes[(TransportOffset + 2)..], destinationPort);
     }
+
+    // RFC 9293 section 3.10.7.1: never answer a reset; use the incoming ACK
+    // as our sequence, or acknowledge its sequence space when ACK is absent.
+    public byte[]? CreateTcpReset(ReadOnlySpan<byte> bytes)
+    {
+        if ((TcpFlags & 4) != 0) { return null; }
+        if ((TcpFlags & 16) != 0)
+        {
+            return CreateTcpReset(Flow, BinaryPrimitives.ReadUInt32BigEndian(bytes[(TransportOffset + 8)..]));
+        }
+        var length = AddressLength == 16 ? 40 + BinaryPrimitives.ReadUInt16BigEndian(bytes[4..])
+            : BinaryPrimitives.ReadUInt16BigEndian(bytes[2..]);
+        var sequenceLength = length - TransportOffset - (bytes[TransportOffset + 12] >> 4) * 4
+            + ((TcpFlags & 2) != 0 ? 1 : 0) + ((TcpFlags & 1) != 0 ? 1 : 0);
+        return CreateTcpReset(Flow, 0, unchecked(TcpSequence + (uint)sequenceLength));
+    }
+
+    public static byte[] CreateTcpReset(RouteFlow flow, uint sequence, uint? acknowledgement = null)
+    {
+        var bytes = new byte[flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6 ? 60 : 40];
+        var header = WriteReplyHeader(bytes, flow, 6);
+        BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(header), flow.RemotePort);
+        BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(header + 2), flow.LocalPort);
+        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(header + 4), sequence);
+        BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(header + 8), acknowledgement ?? 0);
+        bytes[header + 12] = 0x50;
+        bytes[header + 13] = acknowledgement.HasValue ? (byte)0x14 : (byte)0x04;
+        return bytes;
+    }
     public static byte[] CreateUdpReply(RouteFlow flow, ReadOnlySpan<byte> payload)
     {
         var bytes = new byte[(flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6 ? 48 : 28) + payload.Length];
@@ -141,26 +170,34 @@ internal sealed record RoutePacket(RouteFlow Flow, int TransportOffset, int Sour
         var length = header + 8 + payload.Length;
         bytes = bytes[..length];
         bytes[..(header + 8)].Clear(); // Reused storage must not retain old IP/UDP fields.
-        bytes[0] = v6 ? (byte)0x60 : (byte)0x45;
-        if (v6)
-        {
-            bytes[6] = 17;
-            bytes[7] = 64;
-            BinaryPrimitives.WriteUInt16BigEndian(bytes[4..], (ushort)(payload.Length + 8));
-        }
-        else
-        {
-            bytes[8] = 64;
-            bytes[9] = 17;
-            BinaryPrimitives.WriteUInt16BigEndian(bytes[2..], (ushort)bytes.Length);
-        }
-        flow.RemoteAddress.TryWriteBytes(bytes.Slice(v6 ? 8 : 12, v6 ? 16 : 4), out _);
-        flow.LocalAddress.TryWriteBytes(bytes.Slice(v6 ? 24 : 16, v6 ? 16 : 4), out _);
+        WriteReplyHeader(bytes, flow, 17);
         BinaryPrimitives.WriteUInt16BigEndian(bytes[header..], flow.RemotePort);
         BinaryPrimitives.WriteUInt16BigEndian(bytes[(header + 2)..], flow.LocalPort);
         BinaryPrimitives.WriteUInt16BigEndian(bytes[(header + 4)..], (ushort)(payload.Length + 8));
         payload.CopyTo(bytes[(header + 8)..]);
         return length;
+    }
+
+    private static int WriteReplyHeader(Span<byte> bytes, RouteFlow flow, byte protocol)
+    {
+        var v6 = flow.LocalAddress.AddressFamily == AddressFamily.InterNetworkV6;
+        var header = v6 ? 40 : 20;
+        bytes[0] = v6 ? (byte)0x60 : (byte)0x45;
+        if (v6)
+        {
+            bytes[6] = protocol;
+            bytes[7] = 64;
+            BinaryPrimitives.WriteUInt16BigEndian(bytes[4..], (ushort)(bytes.Length - header));
+        }
+        else
+        {
+            bytes[8] = 64;
+            bytes[9] = protocol;
+            BinaryPrimitives.WriteUInt16BigEndian(bytes[2..], (ushort)bytes.Length);
+        }
+        flow.RemoteAddress.TryWriteBytes(bytes.Slice(v6 ? 8 : 12, v6 ? 16 : 4), out _);
+        flow.LocalAddress.TryWriteBytes(bytes.Slice(v6 ? 24 : 16, v6 ? 16 : 4), out _);
+        return header;
     }
 
 }

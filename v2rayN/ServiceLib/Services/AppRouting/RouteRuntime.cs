@@ -25,7 +25,6 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
     private IRouteEngine? _engine;
     private IDisposable? _lease;
     private IRouteProfile? _core;
-    private string? _key;
     private RouteProfilePlan? _plan;
     public bool IsRunning => _engine != null;
     public long Generation { get; private set; }
@@ -34,13 +33,24 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
     {
         var engine = _engine!.Completion;
         var finished = await Task.WhenAny(_core!.Completion, engine).WaitAsync(token);
-        return finished == engine ? await engine : new IOException("The application-routing Xray core exited unexpectedly.");
+        if (finished == engine) { return await engine; }
+        try { await finished; }
+        catch (Exception ex) { return ex; }
+        return new IOException("The application-routing Xray core exited unexpectedly.");
     }
 
     public async Task ApplyAsync(RouteProfilePlan? plan, CancellationToken token)
     {
         // Keeping the preference enabled without capture selectors needs no driver or observers.
         if (plan == null) { await StopAsync(); return; }
+        token.ThrowIfCancellationRequested();
+        // Main-core reloads can produce the same effective routing configuration.
+        // Keep its sessions, attribution state and supervisor generation intact.
+        if (_plan?.Key == plan.Key && _core?.Completion.IsCompleted == false && _engine?.Completion.IsCompleted == false)
+        {
+            _plan = plan;
+            return;
+        }
         var lease = _lease ?? acquireLease();
         var retired = _core;
         var next = _core;
@@ -48,7 +58,7 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
         try
         {
             token.ThrowIfCancellationRequested();
-            if (_key != plan.Key || next == null || next.Completion.IsCompleted) { next = await plan.Start(token); }
+            if (_plan?.Key != plan.Key || next == null || next.Completion.IsCompleted) { next = await plan.Start(token); }
             // A user reload can beat the recovery timer. A stopped engine cannot
             // accept a policy; drain its native observers before starting another.
             if (_engine?.Completion.IsCompleted == true)
@@ -64,7 +74,6 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
             candidate?.Start();
             _engine ??= candidate;
             _core = next;
-            _key = plan.Key;
             _plan = plan;
             _lease = lease;
             Generation++;
@@ -89,16 +98,10 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
         }
     }
 
-    public async Task RestartAsync(CancellationToken token)
-    {
-        // A failed restart must retain the plan for the supervisor's next retry.
-        // An explicit StopAsync still clears it and releases all owned resources.
-        var plan = _plan ?? throw new InvalidOperationException("No application-routing plan to recover.");
-        try { await StopAsync(); }
-        finally { _plan = plan; }
-        token.ThrowIfCancellationRequested();
-        await ApplyAsync(plan, token);
-    }
+    // Apply already stages replacements and reuses healthy components. Recovery
+    // must not tear down a healthy core or release the machine-wide capture lease.
+    public Task RecoverAsync(CancellationToken token) =>
+        ApplyAsync(_plan ?? throw new InvalidOperationException("No application-routing plan to recover."), token);
 
     public async Task StopAsync()
     {
@@ -108,7 +111,6 @@ internal sealed class RouteRuntime(Func<IRouteEngine> createEngine, Func<IDispos
         var lease = _lease;
         _engine = null;
         _core = null;
-        _key = null;
         _plan = null;
         _lease = null;
         try { if (engine != null) { await engine.DisposeAsync(); } }

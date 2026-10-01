@@ -41,6 +41,10 @@ jobs:
       uses: actions/setup-dotnet@v6
       with:
         dotnet-version: '10.0.1xx'
+    - name: Prepare verified WinDivert assets
+      # The packet fixtures use WinDivert's checksum DLL, never its capture driver.
+      # Prepare the same verified assets as the Windows application publish.
+      run: ./scripts/Get-WinDivert.ps1 -CurlPath "$env:ProgramFiles/Git/mingw64/bin/curl.exe"
     - name: Publish native test host
       run: dotnet publish ./v2rayN/ServiceLib.Tests -c Release -r win-${{ matrix.arch }} --self-contained true -o ./test-host
     - name: Test Windows process, socket and routing code

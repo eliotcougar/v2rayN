@@ -1932,4 +1932,7 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="AppRoutingServiceUnavailable" xml:space="preserve">
     <value>Nincs telepítve</value>
   </data>
+  <data name="AppRoutingBypassLocalTraffic" xml:space="preserve">
+    <value>A helyi felderítés és hálózati konfiguráció forgalma közvetlenül menjen</value>
+  </data>
 </root>

@@ -107,6 +107,7 @@ public partial class OptionSettingWindow : WindowBase<OptionSettingViewModel>
             this.Bind(ViewModel, vm => vm.DoubleClick2Activate, v => v.togDoubleClick2Activate.IsChecked).DisposeWith(disposables);
             this.Bind(ViewModel, vm => vm.ApplicationRouting.Enabled, v => v.togAppRouting.IsChecked).DisposeWith(disposables);
             this.OneWayBind(ViewModel, vm => vm.ApplicationRouting.CanChangeRouting, v => v.togAppRouting.IsEnabled).DisposeWith(disposables);
+            this.Bind(ViewModel, vm => vm.ApplicationRouting.BypassLocalTraffic, v => v.chkAppRoutingLocalTraffic.IsChecked).DisposeWith(disposables);
             this.BindCommand(ViewModel, vm => vm.ApplicationRouting.PickInterfacesCmd, v => v.btnAppRoutingInterfaces).DisposeWith(disposables);
             ViewModel.ApplicationRouting.PickInterfaces.RegisterHandler(async interaction =>
             {

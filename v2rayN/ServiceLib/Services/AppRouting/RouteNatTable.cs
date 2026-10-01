@@ -6,9 +6,17 @@ internal sealed class RouteNatEntry(RouteFlow flow, RouteTarget rule, ushort tra
     public RouteTarget Rule { get; } = rule;
     public ushort TranslatedPort { get; } = translatedPort;
     public uint InitialSequence { get; } = initialSequence;
+    // Packet processing serializes updates. The application's latest ACK gives
+    // an acceptable reset sequence, including when its stream is otherwise idle.
+    public uint? ClientAcknowledgement { get; set; }
+    public byte[] CreateReset() => ClientAcknowledgement is uint ack
+        ? RoutePacket.CreateTcpReset(Flow, ack)
+        : RoutePacket.CreateTcpReset(Flow, 0, unchecked(InitialSequence + 1));
     private long _lastActivity = Environment.TickCount64;
     private volatile bool _accepted;
     private volatile bool _closed;
+    private volatile bool _retired;
+    public bool Retired => _retired;
     private readonly object _relayGate = new();
     private CancellationTokenSource? _relayStop;
     public CancellationTokenSource BeginRelay(CancellationToken token)
@@ -25,6 +33,7 @@ internal sealed class RouteNatEntry(RouteFlow flow, RouteTarget rule, ushort tra
     {
         lock (_relayGate)
         {
+            _retired = true;
             Closed = true;
             LastActivity = Environment.TickCount64;
             try { _relayStop?.Cancel(); } catch (ObjectDisposedException) { }
@@ -95,23 +104,11 @@ internal sealed class RouteNatTable
             // Retransmissions retain their initial sequence and keep the same mapping.
             if (entry != null && synSequence is uint sequence && (entry.Closed || entry.InitialSequence != sequence))
             {
-                Retire(entry);
+                entry.Retire();
+                _forward.Remove(flow);
                 return null;
             }
             return entry;
-        }
-    }
-
-    private void Retire(RouteNatEntry entry)
-    {
-        // Keep the reverse entry briefly so late FIN/RST responses cannot escape onto the network.
-        lock (_gate)
-        {
-            entry.Retire();
-            if (ReferenceEquals(_forward.GetValueOrDefault(entry.Flow), entry))
-            {
-                _forward.Remove(entry.Flow);
-            }
         }
     }
 
@@ -134,7 +131,8 @@ internal sealed class RouteNatTable
             foreach (var entry in _reverse.Values.Where(e => (e.Closed || !e.Accepted) &&
                          now - e.LastActivity > 120_000).ToArray())
             {
-                Retire(entry);
+                entry.Retire();
+                if (ReferenceEquals(_forward.GetValueOrDefault(entry.Flow), entry)) { _forward.Remove(entry.Flow); }
                 _reverse.Remove(entry.TranslatedPort);
             }
         }
@@ -149,11 +147,15 @@ internal sealed class RouteNatTable
         }
     }
 
-    public void Retain(RoutePolicy policy, Func<RouteNatEntry, bool>? retainInterface = null)
+    public IReadOnlyList<RouteNatEntry> Retain(RoutePolicy policy, Func<RouteNatEntry, bool>? retainInterface = null)
     {
         lock (_gate)
         {
-            foreach (var entry in _forward.Values.Where(e => !policy.Retains(e.Rule) || retainInterface?.Invoke(e) == false).ToArray()) { Retire(entry); }
+            var retired = _forward.Values.Where(e => !e.Closed && (!policy.Retains(e.Rule) || retainInterface?.Invoke(e) == false)).ToArray();
+            // Keep retired forward tombstones until a new SYN or expiry. Old
+            // ACK/data must not follow a newly unselected/direct policy.
+            foreach (var entry in retired) { entry.Retire(); }
+            return retired;
         }
     }
 }

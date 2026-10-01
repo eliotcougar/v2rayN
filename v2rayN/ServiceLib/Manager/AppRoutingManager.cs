@@ -128,8 +128,16 @@ public sealed class AppRoutingManager
             var retrySeconds = 1;
             while (!token.IsCancellationRequested)
             {
-                Report($"Application routing is recovering; retrying in {retrySeconds} seconds: " +
-                    (error?.Message ?? "The capture engine stopped unexpectedly."));
+                // Replacement can retire the watched core before replacing its
+                // supervisor. Report only a failure of the committed generation.
+                await _gate.WaitAsync(token);
+                try
+                {
+                    if (generation != _runtime.Generation || _shuttingDown || !config.AppRouting.Enabled) { return; }
+                    Report($"Application routing is recovering; retrying in {retrySeconds} seconds: " +
+                        (error?.Message ?? "The capture engine stopped unexpectedly."));
+                }
+                finally { _gate.Release(); }
                 await _retryDelay(TimeSpan.FromSeconds(retrySeconds), token);
                 retrySeconds = Math.Min(retrySeconds * 2, 30);
                 var recovered = false;
@@ -141,7 +149,7 @@ public sealed class AppRoutingManager
                     _preparation = CancellationTokenSource.CreateLinkedTokenSource(token);
                     try
                     {
-                        await _runtime.RestartAsync(_preparation.Token);
+                        await _runtime.RecoverAsync(_preparation.Token);
                         const string message = "Application routing recovered after a runtime failure. Existing connections may need to reconnect.";
                         Logging.SaveLog(message);
                         NoticeManager.Instance.SendMessageEx(message);

@@ -7,6 +7,7 @@ public partial class AppRoutingSettingsViewModel : MyReactiveObject
 {
     private readonly Config _routingConfig;
     [Reactive] public partial bool Enabled { get; set; }
+    [Reactive] public partial bool BypassLocalTraffic { get; set; }
     public bool CanChangeRouting { get; }
     public Interaction<AppRoutingInterfaceViewModel, bool> PickInterfaces { get; } = new();
     public ReactiveCommand<RxVoid, RxVoid> PickInterfacesCmd { get; }
@@ -15,6 +16,7 @@ public partial class AppRoutingSettingsViewModel : MyReactiveObject
     {
         _routingConfig = config;
         Enabled = config.AppRouting.Enabled;
+        BypassLocalTraffic = config.AppRouting.BypassLocalTraffic;
         CanChangeRouting = isAdministrator;
         PickInterfacesCmd = ReactiveCommand.CreateFromTask(async () =>
         {
@@ -33,18 +35,25 @@ public partial class AppRoutingSettingsViewModel : MyReactiveObject
         });
     }
 
-    // The normal settings confirmation persists enablement. A canceled dialog or
+    // The normal settings confirmation persists preferences. A canceled dialog or
     // failed save must not change the preference or start/stop interception.
     internal async Task<int> SaveAsync(Func<Config, Task<int>> save)
     {
         var previous = _routingConfig.AppRouting.Enabled;
+        var previousBypass = _routingConfig.AppRouting.BypassLocalTraffic;
+        void Restore()
+        {
+            _routingConfig.AppRouting.Enabled = previous;
+            _routingConfig.AppRouting.BypassLocalTraffic = previousBypass;
+        }
         if (CanChangeRouting) { _routingConfig.AppRouting.Enabled = Enabled; }
+        _routingConfig.AppRouting.BypassLocalTraffic = BypassLocalTraffic;
         try
         {
             var result = await save(_routingConfig);
-            if (result != 0) { _routingConfig.AppRouting.Enabled = previous; }
+            if (result != 0) { Restore(); }
             return result;
         }
-        catch { _routingConfig.AppRouting.Enabled = previous; throw; }
+        catch { Restore(); throw; }
     }
 }

@@ -1956,4 +1956,7 @@ Tindakan "Ambil sertifikat" mungkin gagal jika sertifikat self-signed digunakan 
   <data name="AppRoutingServiceUnavailable" xml:space="preserve">
     <value>Tidak terpasang</value>
   </data>
+  <data name="AppRoutingBypassLocalTraffic" xml:space="preserve">
+    <value>Kirim langsung lalu lintas penemuan lokal dan konfigurasi jaringan</value>
+  </data>
 </root>

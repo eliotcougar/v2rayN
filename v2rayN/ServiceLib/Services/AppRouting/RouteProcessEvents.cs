@@ -98,8 +98,10 @@ internal sealed class RouteProcessEvents : IDisposable
     public void Dispose()
     {
         _stopping = true;
-        _session?.Stop();
-        _worker.GetAwaiter().GetResult();
+        // Session disposal also closes the consumer to unblock Process(). Drain
+        // the worker before a replacement can acquire its ownership mutex.
+        try { _session?.Dispose(); }
+        finally { _worker.GetAwaiter().GetResult(); }
     }
 }
 

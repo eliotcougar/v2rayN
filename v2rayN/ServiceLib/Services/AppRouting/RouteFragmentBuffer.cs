@@ -2,10 +2,9 @@ using System.Buffers.Binary;
 
 namespace ServiceLib.Services.AppRouting;
 
-/// <summary>Bypasses known unselected fragments and reassembles selected/unknown traffic.
+/// <summary>Bypasses native/excluded traffic and reassembles other fragments before attribution.
 /// The engine serializes access with packet processing and policy updates.</summary>
-internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? classify = null,
-    Func<DivertAddress, byte, IPAddress, IPAddress, bool>? bypassInterface = null)
+internal sealed class RouteFragmentBuffer(Func<DivertAddress, byte, IPAddress, IPAddress, bool>? bypassInterface = null)
 {
     internal sealed record Batch(byte[] Packet, DivertAddress Address, List<(byte[] Packet, DivertAddress Address)> Originals, bool PassThrough = false);
     private sealed record Key(IPAddress Source, IPAddress Destination, uint Id, byte Protocol, uint Interface);
@@ -21,7 +20,6 @@ internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? cl
         public List<(byte[] Packet, DivertAddress Address)> Originals = [];
     }
     private readonly Dictionary<Key, Assembly> _pending = [];
-    private readonly Dictionary<Key, long> _bypass = [];
     private int _buffered;
 
     // False means an ordinary unfragmented packet. True with null batch means buffered.
@@ -97,7 +95,9 @@ internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? cl
             return false;
         }
 
-        if (protocol is not (6 or 17)) { return false; }
+        // IPv6 Destination Options may follow the Fragment header. They are part
+        // of the fragmentable data; RoutePacket walks them after reassembly.
+        if (protocol is not (6 or 17) && !(six && protocol == 60)) { return false; }
         if (prefixLength < 20 || total > packet.Length || start >= total ||
             more && (total - start) % 8 != 0 || offset + total - start > 65535)
         {
@@ -108,7 +108,7 @@ internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? cl
         var key = new Key(new(packet.Slice(six ? 8 : 12, six ? 16 : 4)),
             new(packet.Slice(six ? 24 : 16, six ? 16 : 4)), id, protocol, address.InterfaceIndex);
         Expire(Environment.TickCount64);
-        // Excluded adapters need no ownership lookup or reassembly, even when a
+        // Excluded adapters and native local traffic need no ownership lookup or reassembly, even when a
         // non-initial fragment arrives first. Potential TCP relay replies are the
         // exception: their translated ports must never escape onto the network.
         if (bypassInterface?.Invoke(address, protocol, key.Source, key.Destination) == true)
@@ -119,35 +119,9 @@ internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? cl
             batch = new([], address, originals, true);
             return true;
         }
-        if (offset == 0 && total - start >= 4 && classify != null)
-        {
-            _bypass.Remove(key);
-            IPAddress Scoped(IPAddress ip) => ip.IsIPv6LinkLocal ? new(ip.GetAddressBytes(), address.InterfaceIndex) : ip;
-            var flow = new RouteFlow(protocol, Scoped(key.Source), BinaryPrimitives.ReadUInt16BigEndian(packet[start..]),
-                Scoped(key.Destination), BinaryPrimitives.ReadUInt16BigEndian(packet[(start + 2)..]));
-            // A fragmented TCP SYN still needs the normal fresh ownership check.
-            // A tiny first fragment without the flags cannot prove it is not a SYN.
-            var canBypass = protocol == 17 || total - start >= 14 && (packet[start + 13] & 2) == 0;
-            if (canBypass && classify(flow) == RouteDecisionKind.Unselected)
-            {
-                var originals = new List<(byte[] Packet, DivertAddress Address)>();
-                if (_pending.Remove(key, out var buffered))
-                {
-                    originals.AddRange(buffered.Originals);
-                    _buffered -= buffered.Originals.Sum(p => p.Packet.Length) + buffered.Received;
-                }
-                if (_bypass.Count >= 4096) { _bypass.Remove(_bypass.Keys.First()); }
-                _bypass[key] = Environment.TickCount64;
-                originals.Add((packet.ToArray(), address));
-                batch = new([], address, originals, true);
-                return true;
-            }
-        }
-        else if (_bypass.ContainsKey(key))
-        {
-            batch = new([], address, [(packet.ToArray(), address)], true);
-            return true;
-        }
+        // Ports and process ownership are established only for the complete
+        // datagram. IP IDs can be reused, and do not identify an application's
+        // socket: caching a previous bypass could emit a new flow's tail natively.
         if (!_pending.TryGetValue(key, out var assembly))
         {
             if (_pending.Count >= 256)
@@ -236,22 +210,14 @@ internal sealed class RouteFragmentBuffer(Func<RouteFlow, RouteDecisionKind>? cl
 
     internal void Expire(long now)
     {
-        foreach (var key in _bypass.Where(p => now - p.Value > 15_000).Select(p => p.Key).ToArray()) { _bypass.Remove(key); }
         foreach (var pair in _pending.Where(p => now - p.Value.Created > 15_000).ToArray())
         {
             Remove(pair.Key, pair.Value);
         }
     }
 
-    public void ClearDecisions() => _bypass.Clear();
-
     public void RetainInterfaces(Func<uint, bool, bool> retain)
     {
-        foreach (var key in _bypass.Keys.Where(k => !retain(k.Interface,
-                     k.Source.AddressFamily == AddressFamily.InterNetworkV6)).ToArray())
-        {
-            _bypass.Remove(key);
-        }
         foreach (var pair in _pending.Where(p => !retain(p.Key.Interface,
                      p.Key.Source.AddressFamily == AddressFamily.InterNetworkV6)).ToArray())
         {

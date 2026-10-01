@@ -207,9 +207,12 @@ internal sealed class RouteAttributionSource : IDisposable
     {
         lock (_gate)
         {
-            _socketEvents?.Dispose();
-            _processEvents?.Dispose();
-            _processes.Dispose();
+            try { _socketEvents?.Dispose(); }
+            finally
+            {
+                try { _processEvents?.Dispose(); }
+                finally { _processes.Dispose(); }
+            }
         }
     }
 }

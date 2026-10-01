@@ -1,10 +1,15 @@
 namespace ServiceLib.Services.AppRouting;
 
+internal interface IRouteCoreApi
+{
+    Task Execute(string command, JsonNode? input, CancellationToken token, params string[] arguments);
+}
+
 /// <summary>Uses the packaged core's API client, so its protobuf schema always matches the server.
 /// Runs only when preparing a new match combination; no subprocess is used on the packet path.</summary>
-internal sealed class RouteCoreApi(string core, IReadOnlyDictionary<string, string>? environment, int port)
+internal sealed class RouteCoreApi(string core, IReadOnlyDictionary<string, string>? environment, int port) : IRouteCoreApi
 {
-    internal async Task Execute(string command, JsonNode? input, CancellationToken token, params string[] arguments)
+    public async Task Execute(string command, JsonNode? input, CancellationToken token, params string[] arguments)
     {
         var start = new ProcessStartInfo(core) { UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,

@@ -5419,6 +5419,7 @@ namespace ServiceLib.Resx {
         public static string AppRoutingNoNetworkApps => ResourceManager.GetString("AppRoutingNoNetworkApps", resourceCulture);
         public static string AppRoutingPathUnavailable => ResourceManager.GetString("AppRoutingPathUnavailable", resourceCulture);
         public static string AppRoutingMonitorInterfaces => ResourceManager.GetString("AppRoutingMonitorInterfaces", resourceCulture);
+        public static string AppRoutingBypassLocalTraffic => ResourceManager.GetString("AppRoutingBypassLocalTraffic", resourceCulture);
         public static string AppRoutingMonitorNewInterfaces => ResourceManager.GetString("AppRoutingMonitorNewInterfaces", resourceCulture);
         public static string AppRoutingInterfacesHelp => ResourceManager.GetString("AppRoutingInterfacesHelp", resourceCulture);
         public static string AppRoutingWindowsApps => ResourceManager.GetString("AppRoutingWindowsApps", resourceCulture);

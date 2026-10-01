@@ -2062,4 +2062,7 @@
   <data name="AppRoutingServiceUnavailable" xml:space="preserve">
     <value>未安裝</value>
   </data>
+  <data name="AppRoutingBypassLocalTraffic" xml:space="preserve">
+    <value>本機探索和網路設定流量保持直連</value>
+  </data>
 </root>

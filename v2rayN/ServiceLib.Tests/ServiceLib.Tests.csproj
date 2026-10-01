@@ -4,6 +4,8 @@
         <OutputType>Exe</OutputType>
         <IsPackable>false</IsPackable>
         <ImplicitUsings>enable</ImplicitUsings>
+        <WinDivertTestArchitecture>x64</WinDivertTestArchitecture>
+        <WinDivertTestArchitecture Condition="'$(RuntimeIdentifier)' == 'win-x86'">x86</WinDivertTestArchitecture>
     </PropertyGroup>
 
     <ItemGroup>
@@ -13,6 +15,13 @@
 
     <ItemGroup>
         <ProjectReference Include="..\ServiceLib\ServiceLib.csproj" />
+    </ItemGroup>
+
+    <!-- Packet fixtures use only the DLL's stateless checksum helper. No driver
+         is copied, opened or loaded by the test host. -->
+    <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+        <Content Include="..\WinDivert\$(WinDivertTestArchitecture)\WinDivert.dll" Link="WinDivert.dll"
+                 CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
 
     <ItemGroup>

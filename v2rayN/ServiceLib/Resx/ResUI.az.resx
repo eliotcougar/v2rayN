@@ -2061,4 +2061,7 @@ Təyin edildikdə sertifikat sabitlənəcək və "Təhlükəsiz olmayan əlaqəy
   <data name="AppRoutingServiceUnavailable" xml:space="preserve">
     <value>Quraşdırılmayıb</value>
   </data>
+  <data name="AppRoutingBypassLocalTraffic" xml:space="preserve">
+    <value>Yerli aşkarlama və şəbəkə konfiqurasiyası trafikini birbaşa göndər</value>
+  </data>
 </root>

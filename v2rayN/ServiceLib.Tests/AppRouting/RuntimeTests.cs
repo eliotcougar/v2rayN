@@ -56,6 +56,28 @@ public class RuntimeTests
     private static RouteProfilePlan Plan(string key, Func<CancellationToken, Task<IRouteProfile>> start) => new(key, start);
 
     [Test]
+    public async Task ACommittedReplacementDoesNotReportItsRetiredCoreAsAFailure()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var events = new List<string>();
+        var runtime = new RouteRuntime(() => new Engine(events), () => new Lease());
+        var retries = 0;
+        var manager = new AppRoutingManager(runtime, (_, _) =>
+        { Interlocked.Increment(ref retries); return Task.CompletedTask; });
+        var config = new Config { AppRouting = new() { Enabled = true } };
+        try
+        {
+            await runtime.ApplyAsync(Plan("old", _ => Task.FromResult<IRouteProfile>(new Profile("old", 10001, events))), timeout.Token);
+            var watcher = manager.WatchRuntime(config);
+            await runtime.ApplyAsync(Plan("new", _ => Task.FromResult<IRouteProfile>(new Profile("new", 10002, events))), timeout.Token);
+            await watcher.WaitAsync(timeout.Token);
+            await retries.Should().BeEqualTo(0);
+            await runtime.IsRunning.Should().BeTrue();
+        }
+        finally { await manager.ShutdownAsync(); }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task NoCaptureSelectorsReleaseAnExistingRuntimeAndNeverStartANewOne(bool running)
@@ -124,7 +146,13 @@ public class RuntimeTests
         try
         {
             await runtime.ApplyAsync(Plan("one", _ => Task.FromResult<IRouteProfile>(old)), default);
+            var generation = runtime.Generation;
             await runtime.ApplyAsync(Plan("one", _ => throw new Exception("must reuse")), default);
+            await runtime.Generation.Should().BeEqualTo(generation);
+            using var cancelled = new CancellationTokenSource();
+            cancelled.Cancel();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => runtime.ApplyAsync(Plan("one", _ => throw new Exception("must reuse")), cancelled.Token));
+            await runtime.Generation.Should().BeEqualTo(generation);
             var apply = runtime.ApplyAsync(Plan("two", _ => ready.Task), default);
             await runtime.IsRunning.Should().BeTrue();
             await engine.Excluded.Should().BeEqualTo(10001);
@@ -134,7 +162,7 @@ public class RuntimeTests
             await apply;
             await engine.Excluded.Should().BeEqualTo(10002);
             await engine.Routes.Should().BeEqualTo(next.SharedPolicy);
-            await events.SequenceEqual(new[] { "apply", "start", "apply", "apply", "dispose old" }).Should().BeTrue();
+            await events.SequenceEqual(new[] { "apply", "start", "apply", "dispose old" }).Should().BeTrue();
             await lease.Disposed.Should().BeFalse();
         }
         finally { ready.TrySetResult(next); await runtime.StopAsync(); }
@@ -222,9 +250,10 @@ public class RuntimeTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task BothCoreExitAndEngineFailureAreObservable(bool coreExit)
+    [Arguments("engine")]
+    [Arguments("core")]
+    [Arguments("invalid-core")]
+    public async Task BothCoreExitAndEngineFailureAreObservable(string source)
     {
         var events = new List<string>();
         var engine = new Engine(events);
@@ -235,10 +264,99 @@ public class RuntimeTests
         {
             await runtime.ApplyAsync(Plan("one", _ => Task.FromResult<IRouteProfile>(profile)), timeout.Token);
             var failure = runtime.WaitForFailureAsync(timeout.Token);
-            if (coreExit) { profile.End.SetResult(); } else { engine.End.SetResult(new IOException("capture failed")); }
-            await ((await failure) is IOException).Should().BeTrue();
+            if (source == "core") { profile.End.SetResult(); }
+            else if (source == "invalid-core") { profile.End.SetException(new IOException("rollback failed")); }
+            else { engine.End.SetResult(new IOException("capture failed")); }
+            var error = await failure;
+            await (error is IOException).Should().BeTrue();
+            if (source == "invalid-core") { await error!.Message.Should().BeEqualTo("rollback failed"); }
         }
         finally { await runtime.StopAsync(); }
+    }
+
+    [Test]
+    [Arguments("engine")]
+    [Arguments("core")]
+    [Arguments("both")]
+    [Arguments("cleanup")]
+    public async Task RecoveryReplacesOnlyFailedComponentsAndKeepsTheCaptureLease(string failure)
+    {
+        var events = new List<string>();
+        var engines = new List<Engine>();
+        var cores = new List<Profile>();
+        var lease = new Lease();
+        var leases = 0;
+        var runtime = new RouteRuntime(() =>
+        {
+            var engine = new Engine(events);
+            engines.Add(engine);
+            return engine;
+        }, () => { leases++; return lease; });
+        var plan = Plan("one", _ =>
+        {
+            var core = new Profile("core", 10000 + cores.Count, events);
+            cores.Add(core);
+            return Task.FromResult<IRouteProfile>(core);
+        });
+        try
+        {
+            await runtime.ApplyAsync(plan, default);
+            if (failure != "core") { engines[0].End.SetResult(new IOException("observation failed")); }
+            if (failure is "core" or "both") { cores[0].End.SetResult(); }
+            if (failure == "cleanup")
+            {
+                engines[0].ThrowOnDispose = true;
+                await Assert.ThrowsAsync<IOException>(() => runtime.RecoverAsync(default));
+                await cores[0].Disposed.Should().BeFalse();
+                await lease.Disposed.Should().BeFalse();
+            }
+            await runtime.RecoverAsync(default);
+            var replaceCore = failure is "core" or "both";
+            await cores.Count.Should().BeEqualTo(replaceCore ? 2 : 1);
+            await cores[0].Disposed.Should().BeEqualTo(replaceCore);
+            await engines.Count.Should().BeEqualTo(failure == "core" ? 1 : 2);
+            await engines.Last().Routes.Should().BeEqualTo(cores.Last().SharedPolicy);
+            await engines.Last().Completion.IsCompleted.Should().BeFalse();
+            await leases.Should().BeEqualTo(1);
+            await lease.Disposed.Should().BeFalse();
+        }
+        finally { await runtime.StopAsync(); }
+        await cores.All(core => core.Disposed).Should().BeTrue();
+        await lease.Disposed.Should().BeTrue();
+    }
+
+    [Test]
+    public async Task RepeatedObserverRecoveryPreservesTheHealthyCoreAndReleasesEveryEngine()
+    {
+        var events = new List<string>();
+        var engines = new List<Engine>();
+        var core = new Profile("core", 10001, events);
+        var lease = new Lease();
+        var starts = 0;
+        var runtime = new RouteRuntime(() =>
+        {
+            var engine = new Engine(events);
+            engines.Add(engine);
+            return engine;
+        }, () => lease);
+        try
+        {
+            await runtime.ApplyAsync(Plan("one", _ => { starts++; return Task.FromResult<IRouteProfile>(core); }), default);
+            for (var iteration = 0; iteration < 100; iteration++)
+            {
+                engines[^1].End.SetResult(new IOException("observation failed"));
+                await runtime.RecoverAsync(default);
+                await core.Disposed.Should().BeFalse();
+                await lease.Disposed.Should().BeFalse();
+            }
+            await starts.Should().BeEqualTo(1);
+            await engines.Count.Should().BeEqualTo(101);
+            await events.Count(e => e == "stop").Should().BeEqualTo(100);
+        }
+        finally { await runtime.StopAsync(); }
+        await events.Count(e => e == "stop").Should().BeEqualTo(101);
+        await core.Disposed.Should().BeTrue();
+        await lease.Disposed.Should().BeTrue();
     }
 
     [Test]
@@ -268,24 +386,26 @@ public class RuntimeTests
         {
             await runtime.ApplyAsync(plan, default);
             engines[0].End.SetResult(new IOException("socket history failed"));
+            cores[0].End.SetResult();
             await (await runtime.WaitForFailureAsync(default) is IOException).Should().BeTrue();
             using var cancel = new CancellationTokenSource();
             if (cancelled) { cancel.Cancel(); }
-            if (cancelled) { await Assert.ThrowsAsync<OperationCanceledException>(() => runtime.RestartAsync(cancel.Token)); }
-            else { await Assert.ThrowsAsync<IOException>(() => runtime.RestartAsync(default)); }
-            await runtime.IsRunning.Should().BeFalse();
-            await cores.All(core => core.Disposed).Should().BeTrue();
-            await leases.All(lease => lease.Disposed).Should().BeTrue();
-            await runtime.RestartAsync(default);
+            if (cancelled) { await Assert.ThrowsAsync<OperationCanceledException>(() => runtime.RecoverAsync(cancel.Token)); }
+            else { await Assert.ThrowsAsync<IOException>(() => runtime.RecoverAsync(default)); }
+            await cores[0].Disposed.Should().BeFalse();
+            await leases[0].Disposed.Should().BeFalse();
+            await runtime.RecoverAsync(default);
             await runtime.IsRunning.Should().BeTrue();
             await engines.Count.Should().BeEqualTo(2);
             await engines[1].Completion.IsCompleted.Should().BeFalse();
             await cores.Last().Disposed.Should().BeFalse();
+            await cores[0].Disposed.Should().BeTrue();
+            await leases.Count.Should().BeEqualTo(1);
         }
         finally { await runtime.StopAsync(); }
         await cores.All(core => core.Disposed).Should().BeTrue();
         await leases.All(lease => lease.Disposed).Should().BeTrue();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RestartAsync(default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RecoverAsync(default));
     }
 
     [Test]
@@ -298,6 +418,7 @@ public class RuntimeTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var events = new List<string>();
         var engines = new List<Engine>();
+        var cores = new List<Profile>();
         var attempts = 0;
         var retryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -317,7 +438,9 @@ public class RuntimeTests
                 if (scenario == "stop-preparation") { await Task.Delay(Timeout.Infinite, token); }
                 if (scenario == "retry") { throw new IOException("temporary restart failure"); }
             }
-            return new Profile("core", 10000 + attempts, events);
+            var core = new Profile("core", 10000 + attempts, events);
+            cores.Add(core);
+            return core;
         }), timeout.Token);
         ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var watch = manager.WatchRuntime(config);
@@ -325,6 +448,7 @@ public class RuntimeTests
         try
         {
             engines[0].End.SetResult(new IOException("observation failed"));
+            cores[0].End.SetResult();
             if (scenario == "retry")
             {
                 await ready.Task.WaitAsync(timeout.Token);
@@ -417,17 +541,19 @@ public class RuntimeTests
         var manager = new AppRoutingManager(runtime, Delay);
         var config = new Config { AppRouting = new() { Enabled = true } };
         var attempts = 0;
+        var core = new Profile("core", 10001, events);
         await runtime.ApplyAsync(Plan("one", _ => ++attempts == 1
-            ? Task.FromResult<IRouteProfile>(new Profile("core", 10001, events))
+            ? Task.FromResult<IRouteProfile>(core)
             : throw new IOException("temporarily unavailable")), timeout.Token);
         var watch = manager.WatchRuntime(config);
         try
         {
             engine.End.SetResult(new IOException("observation failed"));
+            core.End.SetResult();
             await firstDelay.Task.WaitAsync(timeout.Token);
             releaseFirst.SetResult();
             await secondDelay.Task.WaitAsync(timeout.Token);
-            await runtime.IsRunning.Should().BeFalse();
+            await core.Disposed.Should().BeFalse();
             // This is also the guard used by the TUN toggle. Recovery continues
             // owning the routing mode while waiting to acquire fresh resources.
             await manager.IsRunning.Should().BeTrue();

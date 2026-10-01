@@ -39,8 +39,10 @@ of working process interception or absence of traffic leaks.
    WinDivert applies the current saved policy at the start of that reload, before
    the main core is replaced and before the availability-test delay. Rapid reload
    requests use the application's existing reload coordinator.
-6. Fully exit and restart affected applications to establish new connections.
-   Existing TCP connections cannot be moved to another route. Disabling routing
+6. Applications need new connections to use a changed route. The router now resets
+   affected TCP sockets so clients can reconnect, instead of leaving their packets
+   stalled. Clients that do not retry may still need a manual reconnect or restart.
+   Existing TCP streams cannot be transferred to another proxy. Disabling routing
    and saving stops interception. Closing settings does not stop it. Normal app
    exit preserves the enabled preference; startup and subsequent reloads retry
    enabled routing even if an earlier start failed. Errors appear in the main
@@ -117,6 +119,46 @@ the Windows adapter ID, so renaming an adapter or changing its interface index
 does not reset them. An adapter recreated with a different ID is a new interface.
 An adapter created and removed entirely between discovery reads cannot be remembered.
 
+### Local discovery and network configuration
+
+**Keep local discovery and network configuration traffic direct** is enabled by
+default in v2rayN settings, including when loading an older configuration. It
+preserves the native Windows path before application/socket matching for:
+
+- IPv4/IPv6 multicast, IPv4 limited broadcast, and directed broadcast belonging
+  to the outgoing adapter's connected subnet. `/31` and `/32` have no broadcast.
+- IPv4 `169.254.0.0/16` and IPv6 `fe80::/10` link-local destinations.
+- UDP DHCP client/server/relay exchanges (`68`/`67` and `546`/`547`), including
+  unicast lease renewal to an off-link DHCP server.
+- UDP mDNS (`5353`), LLMNR (`5355`), SSDP (`1900`), WS-Discovery (`3702`), and
+  NetBIOS discovery (`137`, `138`) queries and replies to peers in the outgoing
+  adapter's connected prefixes. Replies from these ports to ephemeral ports are
+  included; the same ports on unrelated destinations are not exempt.
+
+Shared mDNS bindings are intentional; selecting a single socket owner is not
+necessary for this traffic. These packets and their fragments are reinjected
+unchanged, preserving their source addresses/ports, TTL/hop limit and captured
+metadata. No SOCKS association or remote proxy is used. Windows routing and
+firewall rules still apply. Adapter prefixes refresh with interface discovery;
+the capture loop performs no additional network queries.
+
+The preference can be edited without administrator rights, like adapter choices;
+starting interception still requires administrator rights.
+The exception precedes both proxy and block rules. Turn it off if those rules
+should intentionally control local discovery/configuration traffic; ordinary
+matching then applies, including blocking packets with ambiguous selected owners.
+It does **not** exempt all private addresses or ordinary unicast LAN/VPN traffic:
+DNS, SMB, VNC, printing and other connections to ordinary unicast destinations
+still follow the routing table.
+Existing redirected TCP streams retain their translation across changes to this
+setting; restart the routed app to change those streams' path.
+
+Protocol references: [mDNS, including shared bindings and unicast replies](https://www.rfc-editor.org/rfc/rfc6762.html),
+[Windows discovery ports](https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/service-overview-and-network-port-requirements),
+[WS-Discovery](https://learn.microsoft.com/en-us/windows/win32/wsdapi/inspecting-adapter-and-firewall-settings),
+[DHCPv4](https://www.rfc-editor.org/rfc/rfc2131.html), and
+[DHCPv6](https://www.rfc-editor.org/rfc/rfc8415.html).
+
 Selection uses the outbound interface reported by WinDivert, before any relay
 connection is created. It is a routing scope, not a firewall or a guarantee of
 compatibility with every VPN. The persistent WinDivert handle still captures
@@ -165,8 +207,10 @@ relationships, not application/package membership. ETW and socket delivery are
 asynchronous: unresolved traffic still has the existing 250 ms bounded wait.
 Observer failure, reported ETW event loss or managed queue overflow retires the
 failed runtime instead of continuing with incomplete history. Automatic recovery
-rebuilds the observers, capture engine and routing core, with retries spaced from
-one second to at most 30 seconds. The enabled preference is preserved; disabling
+uses the normal staged apply path to replace only failed components: observer/capture
+failure preserves a healthy routing core, and core failure preserves a healthy
+capture engine. The capture lease stays owned during retries, spaced from one
+second to at most 30 seconds. The enabled preference is preserved; disabling
 routing, changing its active policy or exiting cancels the superseded recovery.
 TUN remains unavailable during recovery, including the delay between attempts.
 Observer errors identify the process/socket observer and include the underlying cause;
@@ -201,6 +245,17 @@ new policy. Unchanged configurations reuse their core; failed preparation retain
 the previous live policy and reports the failure. The capture engine stays open
 through successful updates; changed routes are retired. Ordinary inbound-tag
 conditions use the logical `app-routing` tag for this traffic.
+
+When a profile changes, old TCP sockets receive resets and reconnect through the
+new profile; UDP associations are recreated for the next datagram from the same
+application socket. Traffic is not deliberately kept on the old profile. A reset
+is also sent when an intercepted TCP packet has lost its relay after a router
+restart. Retired mappings briefly retain tombstones so late packets cannot fall
+through to direct routing. Restarting the main core with an unchanged private
+routing configuration reuses the private core and keeps its connections.
+This avoids silent stalls but does not promise uninterrupted TCP sessions:
+reconnection behavior belongs to the application, and in-flight datagrams can
+be lost during replacement.
 
 The shared core's console output appears unchanged in the main log panel; access
 records identify the route with `app-match-... -> outbound` tags. It follows the
@@ -251,12 +306,14 @@ override timeouts imposed by remote proxies and servers.
   Owner-table sampling still has a race with process/socket teardown; this is
   not a security boundary. Native port-reuse stress testing remains necessary.
 - SOCKS5 UDP fragments (`FRAG != 0`) are unsupported; IP fragments are handled
-  separately. Known unselected traffic bypasses reassembly after its
-  first fragment is classified; later parts use a bounded bypass index. Selected
-  or unresolved traffic, fragmented SYNs and reflected TCP replies still need
-  assembly. Overlapping, incomplete, expired or excessive assemblies are dropped.
+  separately. Address-only native traffic and excluded interfaces bypass assembly,
+  while other supported TCP/UDP fragments are assembled before attribution.
+  Reflected TCP replies still reach reverse NAT. IPv6 Destination Options after
+  the Fragment header are supported. No process-routing decision is cached across
+  datagrams sharing an IP ID. Overlapping, incomplete, expired or excessive
+  assemblies are dropped.
   Reassembly is bounded to 256 assemblies, 16 MiB and 15 seconds per assembly.
-  Out-of-order fragments without a classifiable first fragment can still wait
+  Out-of-order fragments without their first fragment can still wait
   or hit those limits. Passed-through traffic keeps its original fragments.
 - A UDP process/local endpoint/rule shares one socket or SOCKS association across
   remote peers, preserving its outbound source port for that session. Replies use
@@ -264,20 +321,25 @@ override timeouts imposed by remote proxies and servers.
   or IP families can still have multiple sessions; this is not a kernel socket ID.
 - Relay connections are bounded to 2048 TCP and 2048 UDP sessions. UDP queues
   hold at most 64 datagrams and 64 KiB of payload per session, and drop excess
-  traffic without blocking packet capture. After 60 seconds of inactivity,
-  cleanup retires UDP associations only when ownership has been invalidated;
-  a quiet live socket keeps its association. These limits protect memory and
+  traffic without blocking packet capture. Cleanup checks ownership every ten
+  seconds, retiring associations when fresh evidence invalidates their owner or
+  their route/interface is withdrawn. Silence and stale ownership snapshots do
+  not retire an association. These limits protect memory and
   do not promise zero loss. Xray, remote proxies and network NATs have their own
   UDP idle timeouts; keeping the local association does not override them.
   A datagram that exceeds the outbound socket's size limit is dropped and reported
   without closing its UDP association. SOCKS framing reduces the available payload
   size; application datagrams are not split into SOCKS5 fragments.
+  A rejected reply injection is also reported without closing a healthy
+  association; subsequent replies and queued sends retain its source port.
   Connection resets during TCP accept are recoverable; a fatal capture/listener
   or maintenance-worker failure, or an unexpected isolated Xray exit, stops and
   cleans up the runtime and reports the error. The supervisor automatically
   rebuilds it with bounded retry frequency, retaining the enabled preference.
-- ICMP, raw IP protocols, inbound servers and multicast/broadcast discovery
-  are outside the supported application-routing scope. Service rules can select
+- ICMP, raw IP protocols and inbound servers are outside the supported
+  application-routing scope. Native multicast/broadcast discovery is preserved
+  by the default local-traffic exception, rather than relayed through SOCKS.
+  Service rules can select
   a service with a dedicated process directly. For a process shared by several
   services, the endpoint owner module must resolve to an exact service name.
   Windows may instead report a process/component name or no name, so some shared
@@ -368,8 +430,10 @@ cancellation during each handshake stage, shutdown overlapping a final connectio
 UDP multi-peer framing/association/cleanup, shared-table identity handoff, staged
 replacement/rollback, core/engine supervision, exclusive ownership, delayed
 process events, exited launchers, PID/socket reuse and timestamped attribution.
-Socket fixtures are loopback-only and never load
-WinDivert. Existing core/config tests remain in the full test suite.
+Socket fixtures are loopback-only. Windows packet fixtures use WinDivert's
+stateless checksum DLL, prepared by `scripts/Get-WinDivert.ps1`; they never open
+a capture handle or load the driver. Existing core/config tests remain in the
+full test suite.
 
 Before declaring native support verified, use a Windows VM or dedicated test
 host with two adapters and an IPv6-capable test destination. For each route type,
@@ -377,7 +441,10 @@ check TCP, UDP/QUIC and both IP versions with packet captures at the destination
 and host. Include simultaneous selected/unselected executables, identical source
 ports, short-lived launcher/helper chains, one-shot UDP senders, rapid PID/socket
 reuse, ETW startup/stop and event-loss reporting, adapter loss, proxy failure,
-fragmentation, start/stop/exit and both UI variants. Confirm that unselected
+fragmentation, start/stop/exit and both UI variants. Check profile changes with
+idle and active TCP sockets, reset acceptance and client reconnection, unchanged
+private-core reuse, capture failure recovery, and long-lived UDP clients whose
+server sees a changed proxy source endpoint. Confirm that unselected
 traffic and a separate v2rayN installation remain unaffected. No such privileged
 test has been run on the developer's production machine.
 

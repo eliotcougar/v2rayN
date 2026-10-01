@@ -2061,4 +2061,7 @@
   <data name="AppRoutingServiceUnavailable" xml:space="preserve">
     <value>Не установлена</value>
   </data>
+  <data name="AppRoutingBypassLocalTraffic" xml:space="preserve">
+    <value>Направлять трафик локального обнаружения и настройки сети напрямую</value>
+  </data>
 </root>

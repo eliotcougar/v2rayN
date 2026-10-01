@@ -58,15 +58,21 @@ public class ShutdownTests
         listeners.Add(listener);
         var other = engine.Accept(listener.AcceptAsync);
         Workers(engine).Add(other);
+        var lateFailure = new TaskCompletionSource<Socket>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateWorker = engine.Accept(_ => new ValueTask<Socket>(lateFailure.Task));
+        Workers(engine).Add(lateWorker);
         try
         {
             await engine.Accept(_ => ValueTask.FromException<Socket>(new SocketException((int)SocketError.NetworkDown)));
+            lateFailure.SetException(new IOException("another worker observed shutdown"));
             await listener.SafeHandle.IsClosed.Should().BeTrue();
             await other.WaitAsync(timeout.Token);
+            await lateWorker.WaitAsync(timeout.Token);
+            await ((await engine.Completion) is SocketException { SocketErrorCode: SocketError.NetworkDown }).Should().BeTrue();
             await errors.Count.Should().BeEqualTo(1);
             await errors.Single().StartsWith("Application routing stopped:").Should().BeTrue();
         }
-        finally { await engine.DisposeAsync().AsTask().WaitAsync(timeout.Token); }
+        finally { lateFailure.TrySetCanceled(); await engine.DisposeAsync().AsTask().WaitAsync(timeout.Token); }
     }
 
     private static List<Task> Workers(AppRouteEngine engine) =>

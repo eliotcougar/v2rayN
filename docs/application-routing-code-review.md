@@ -25,6 +25,7 @@ as the implementation changes.
 | 1 | [AppRoutingItem.cs](../v2rayN/ServiceLib/Models/Configs/AppRoutingItem.cs), [AppRoutingManager.cs](../v2rayN/ServiceLib/Manager/AppRoutingManager.cs) | What is persisted, and what happens on start, stop, and failure? |
 | 2 | [AppRoutingSettingsViewModel.cs](../v2rayN/ServiceLib/ViewModels/AppRoutingSettingsViewModel.cs) | When do draft edits become saved rules and running routes? |
 | 2a | [RouteInterfaceCatalog.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteInterfaceCatalog.cs), [RouteInterfaceMonitor.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteInterfaceMonitor.cs), [AppRoutingInterfaceViewModel.cs](../v2rayN/ServiceLib/ViewModels/AppRoutingInterfaceViewModel.cs) | How are adapter choices remembered and applied without replacing the capture engine? |
+| 2b | [RouteLocalTraffic.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteLocalTraffic.cs) | Which discovery/configuration packets need their native source and link, before socket-owner matching? |
 | 3 | [AppRoutingManager.cs](../v2rayN/ServiceLib/Manager/AppRoutingManager.cs), [RouteRuntime.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteRuntime.cs), [RouteProfileInstance.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProfileInstance.cs) | Who prepares, commits, supervises and retires runtime resources? |
 | 4 | [RouteSharedRules.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteSharedRules.cs), [RouteAttribution.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteAttribution.cs), [RouteOwnerTable.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteOwnerTable.cs), [RouteProcessTree.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessTree.cs) | How does a packet acquire a main-table routing target? |
 | 4a | [RouteProcessEvents.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessEvents.cs), [RouteSocketEvents.cs](../v2rayN/ServiceLib/Services/AppRouting/RouteSocketEvents.cs) | How are short-lived processes and closed sockets retained without following reused identities? |
@@ -156,7 +157,10 @@ serializes saves around its common temporary file now that discovery can save
 concurrently with UI actions.
 
 The packet path reads an immutable `RouteInterfacePolicy`: a lookup from each
-IPv4/IPv6 interface index to adapter ID and monitored flag. Indexes are never
+IPv4/IPv6 interface index to adapter ID and monitored flag, plus connected prefixes
+and the local-traffic preference. Prefixes come from the same managed adapter
+snapshot; address/prefix or preference changes publish a new policy even when
+adapter selection is unchanged. Indexes are never
 persisted. On a changed snapshot, the engine retires connections, UDP sessions,
 pending attribution packets, and incomplete fragments whose interface was
 excluded or whose index now belongs to another adapter. Unaffected routes stay
@@ -171,6 +175,23 @@ It does not remove WinDivert's capture/reinjection cost on excluded traffic.
 Reverse TCP translation precedes exclusion, because Windows may select an
 excluded adapter for the relay listener's response. Reverse entries remain
 available briefly after retirement to contain late FIN/RST packets.
+
+`RouteLocalTraffic` implements the default-enabled discovery/configuration
+exception before ownership matching: multicast, broadcast, link-local destinations,
+DHCP exchanges, and known UDP discovery ports with an on-link peer. Directed
+broadcast and unicast discovery are specific to the outgoing adapter's prefixes;
+private IP space alone is not a bypass. `/0` never treats the Internet as on-link,
+and `/31`/`/32` do not create broadcast addresses. Prefix comparison ignores IPv6
+scope IDs because the interface index already selects the link. Cached prefix
+objects and stack buffers avoid allocation or OS calls during lookup.
+
+This bypass is deliberately before the shared-bind ambiguity check. mDNS permits
+several processes to bind port 5353, and a SOCKS relay would lose the original
+source/link semantics even if one owner could be identified. Original packets
+and metadata pass through unchanged; the Windows firewall remains in force.
+The settings checkbox can disable this precedence over block/proxy rules.
+Existing TCP mappings and relay responses remain ahead of the exception, so
+changing the setting cannot emit already translated streams onto a real adapter.
 
 Excluded UDP fragments and TCP fragments with no possible reverse mapping pass
 through immediately, including out-of-order fragments. TCP fragments between
@@ -247,14 +268,19 @@ implementing this feature; it cannot coordinate arbitrary third-party filters.
 
 The replacement sequence is:
 
-1. Fingerprint the effective main-table plan and reuse the live shared core if
-   its fingerprint is unchanged.
-2. Otherwise start and authenticate a replacement core while the old core,
-   policy and connections continue serving traffic.
+1. Fingerprint the effective main-table plan. If it is unchanged and both the
+   core and engine are healthy, return without republishing attribution, applying
+   a policy, or advancing the runtime generation.
+2. If the fingerprint changed or the core failed, start and authenticate a
+   replacement while the old policy and connections continue serving traffic.
+   Otherwise reuse the healthy core.
 3. Prepare an ownership index for the shared policy outside the packet lock.
 4. Commit the policy under the engine's packet lock. Retain TCP mappings and UDP
    sessions whose targets belong to the reused core. Replacing the core retires
    all old targets, even if their membership keys have the same text.
+   Retired TCP sockets receive resets while their original endpoint/sequence
+   metadata and the capture handle are still available. UDP sends subsequently
+   create associations against the replacement target from the same app socket.
 5. Publish resource ownership and dispose the superseded core after detaching
    its routes. The capture handle and TCP listeners remain in place.
 
@@ -263,6 +289,11 @@ and native observers before creating its replacement. The capture lease stays
 owned throughout, and an unchanged healthy core can still be reused. This lets
 saved rule changes take effect during recovery instead of applying to a stopped
 engine and leaving the supervisor to restart the older committed plan.
+Automatic recovery uses this same staged apply sequence: a failed engine is
+replaced while its healthy core stays alive; a failed core is replaced while its
+healthy capture engine stays alive. There is no separate stop-and-restart path.
+The committed plan is the sole source of the reuse fingerprint, and the capture
+lease remains owned across failed attempts until an explicit stop.
 
 Preparation failure disposes only newly created resources and preserves the old
 runtime. On initial failure it also releases the new capture lease. The engine's
@@ -333,6 +364,13 @@ semantics, including individually oversized GeoSite and negated GeoIP rules.
 The aggregate profile observes every owned core's exit and disposes all of them
 on stop or replacement; startup failures use the same `RouteProfileInstance`
 cleanup as the shared core. The combination cache remains bounded to 256.
+
+Endpoint preparation installs the complete ordered rule set before exposing its
+inbound. A failed or cancelled API call can have committed remotely, so rollback
+revokes the inbound and rules independently. If either revocation fails, the
+profile's completion task faults with that cause. Supervision then stages a new
+core instead of repeatedly adding orphan listeners and rules to uncertain state.
+New endpoint requests, including cache hits, reject an unhealthy profile.
 
 Normal core reload regenerates the effective main-table plan. Its fingerprint
 includes native rules, capture eligibility, executable/package selectors, profile
@@ -414,6 +452,12 @@ no per-processor minimum allocation. A dedicated worker owns the session and a
 named mutex for its entire lifetime. The installation-derived name lets a restart
 reclaim its own orphaned session after a crash, while refusing to stop another
 active owner. The existing machine-wide capture lease still governs interception.
+Shutdown disposes the tracing session, which also closes its consumer and unblocks
+the reader, then joins that reader before another observer can acquire the mutex.
+TraceEvent explicitly supports cross-thread session disposal; see its
+[session lifetime contract](https://github.com/microsoft/perfview/blob/main/src/TraceEvent/TraceEventSession.cs).
+All attribution observers and retained process handles are drained even if an
+earlier cleanup throws.
 
 [RouteProcessEventDecoder](../v2rayN/ServiceLib/Services/AppRouting/RouteProcessEventDecoder.cs)
 reads the versioned binary payloads for start v0-v4 and stop v0-v2. These fields
@@ -533,7 +577,7 @@ and relay I/O are asynchronous. `RoutePacketBatch.ReadLengths` validates the pac
 IP boundaries and the matching 80-byte address records before processing begins.
 Packet parsing and rewriting operate on slices of the reusable receive buffer.
 `Capture` owns native receive/flush and the packet lock. `ProcessCapturedPacket`
-separates ordinary packets, incomplete assemblies, unselected fragment bypass and
+separates ordinary packets, incomplete assemblies, native/excluded fragment bypass and
 completed assemblies before `Process` applies attribution and TCP/UDP routing.
 
 Immediately forwardable packets are copied into a separate reusable injection
@@ -583,8 +627,12 @@ checksums before reinjection.
 For an ordinary TCP packet, the engine looks up the original flow. If no mapping
 exists, it identifies the owner. Unselected traffic is reinjected unchanged. A
 selected flow can create a mapping only from a SYN without ACK. Remaining packets
-of a connection established before interception are dropped rather than sent
-directly; the application must reconnect.
+of a selected connection without a live relay receive an inbound TCP reset rather
+than being silently dropped. A reset never elicits another reset. Following RFC
+9293 section 3.10.7.1, an ACK supplies the response sequence; otherwise the reset
+acknowledges the packet's sequence space, including payload, SYN/FIN and wraparound.
+The application observes socket failure and can open a connection on the new route.
+The engine cannot transfer a remote TCP stream's state between proxy endpoints.
 
 ### NAT identity and reconnects
 
@@ -612,8 +660,19 @@ directions. EOF shuts down the destination socket's send half, allowing the
 opposite direction to finish. A copy failure disposes both sockets to unblock
 the other copy. Completion marks the NAT entry closed and updates its timestamp.
 The NAT entry owns a relay cancellation source: policy retirement cancels setup
-or stream copying, while keeping the reverse mapping for late responses. The
-retirement timestamp begins the late-response retention interval.
+or stream copying. Retirement also sends a reset using the last captured client
+ACK (or the initial SYN sequence for a pending handshake), so idle streams need
+not wait for their next write to notice the change. A stale reset sequence can
+elicit a challenge ACK; the closed mapping answers that packet with its current
+ACK sequence. Retired forward tombstones are checked before current interface or
+owner eligibility, containing old packets even if the new rule permits direct
+traffic. A fresh SYN removes the tombstone and obtains a new target/translation;
+the old reverse mapping still absorbs late relay responses. Expiry removes each
+forward entry only if it still refers to that same reverse entry, preserving a
+replacement that reused the original tuple. The retirement timestamp begins the
+120-second retention interval.
+Normal relay completion is distinct from retirement: final TCP ACKs still reach
+the listener to finish a graceful close, rather than being turned into resets.
 
 ## 7. UDP: session ownership, buffering, and replies
 
@@ -693,6 +752,11 @@ the association continues sending subsequent packets. This matters when the
 SOCKS header pushes a valid application datagram over the outer UDP size limit.
 Other send errors still terminate the session through normal supervision.
 
+A reply-injection `Win32Exception` or `IOException` similarly reports only the
+rejected datagram. It does not close a healthy SOCKS association, discard queued
+sends or change its source port. Errors from socket receive or the control channel
+remain terminal; unexpected exceptions from the callback still reach supervision.
+
 The reply callback borrows a span of the session's receive buffer for the duration
 of the synchronous call. `CreateUdpSession` keeps ownership/reply callbacks scoped
 to association creation; `SendUdpReply` owns the output buffer's lifetime. The
@@ -702,18 +766,25 @@ the packet, and returns the buffer before the callback completes. Address writin
 uses spans without temporary address arrays. There is no incremental checksum
 optimization. Pool capacity, framing, in-flight packets and receive buffers remain
 outside the queued-payload budget. Session setup is limited to 15 seconds.
-After 60 seconds of inactivity, cleanup checks ownership and retires only an
-invalidated association. A live socket, stale snapshot or temporarily missing
+Cleanup checks ownership every ten seconds and retires an invalidated association
+or one whose route/interface was withdrawn. There is no inactivity timer. A live
+socket, stale snapshot or temporarily missing
 service name preserves the association: silence alone must not discard a delayed
 reply or change a long-running application's local SOCKS source port. Invalidation
 is terminal, so activity resuming concurrently cannot revive a retired session.
-Completed sessions are removed regardless of idle time. A failed association can
+Completed sessions are removed too. A failed association can
 be replaced by the next packet.
 
 Cleanup removes the exact dictionary key/value it inspected so it cannot remove
 a replacement installed concurrently. A separate task registry retains all live
 session tasks, including removed/replaced sessions, until completion. Shutdown
 must drain these retiring sessions too, not only the current endpoint dictionary.
+TCP and UDP use one task-registration helper. Its completion callback removes
+finished tasks synchronously, so a busy thread pool cannot retain completed TCP
+slots and trigger the connection limit unnecessarily.
+Periodic cleanup cancels removed sessions without awaiting their teardown one by
+one. The same task registry drains them at shutdown; a slow endpoint rollback
+therefore cannot delay the next ownership check for unrelated sessions.
 
 ## 8. Internal SOCKS transport
 
@@ -741,19 +812,22 @@ unsupported/raw protocols are outside application routing, not a universal
 malformed-packet blocking policy.
 
 `RouteFragmentBuffer` keys fragments by source, destination, ID, protocol and
-interface. A first TCP/UDP fragment containing transport ports can be classified
-before complete assembly. If proven unselected, any earlier buffered parts and
-the first fragment are reinjected unchanged. A bounded 4096-entry, 15-second
-bypass table passes later parts through. A new first fragment rechecks ownership;
-policy changes clear bypass decisions. Unsupported protocols skip reassembly.
+interface. Address-only native traffic and excluded interfaces bypass assembly,
+including when a non-initial fragment arrives first. Potential TCP reflection
+replies still require assembly and reverse NAT, so translated listener packets
+cannot escape onto the network. This guard also covers IPv6 Destination Options
+that can conceal TCP until assembly completes.
 
-There are two important exceptions to early bypass. Fragmented TCP SYNs (or tiny
-first fragments without TCP flags) must reach normal fresh ownership checking.
-Reflected listener responses and existing selected TCP mappings must reach NAT,
-even though the listener's process is normally excluded. Letting those fragments
-take the ordinary unselected path would emit synthetic traffic on the network.
+All other supported TCP/UDP fragments are assembled before normal tuple/process
+attribution, retaining the first fragment's captured timestamp. Normal fresh-SYN
+ownership checks and existing TCP mappings apply to the reconstructed packet.
+On-link unicast discovery and DHCP are checked there because they require ports.
+There is no process-dependent bypass cache: an IP ID can be reused by another
+socket, so a previous datagram cannot authorize a new datagram's tail fragments.
+IPv6 Destination Options after the Fragment header are retained and parsed by
+`RoutePacket` after reconstruction. Unsupported protocols skip reassembly.
 
-Selected and unresolved fragments use bounded reassembly: 256 assemblies, 1024
+Reassembly is bounded to 256 assemblies, 1024
 parts each, 16 MiB of accounted original/payload data, and a 15-second age limit.
 Exact duplicates are ignored; overlap or inconsistent ranges reject an assembly.
 Completion reconstructs one packet, removing the IPv6 fragment header when needed.
@@ -761,6 +835,12 @@ Original fragments are retained for unchanged pass-through if completed attribut
 is unselected. Out-of-order parts without their first fragment still wait and can
 hit assembly limits. Expiry runs on subsequent fragmented input; memory is bounded
 even if no further input arrives.
+
+Interface changes discard pending assemblies only for interfaces that are no
+longer monitored; another adapter's changes preserve their fragments. Ordinary
+unselected fragmented traffic now incurs bounded copying/assembly before its
+original packets are reinjected. Unfragmented packet batching and selected
+datagram reassembly keep their existing paths.
 
 ## 10. Concurrency, health, limits, and shutdown
 
@@ -788,25 +868,32 @@ are separately drained and may briefly exceed the active-session count.
 
 Per-flow errors use a throttled notice and never silently send selected packets
 directly. Fatal capture/listener/maintenance/attribution errors complete the engine's
-failure task and stop its workers. Capture closes the handle in `finally`, avoiding
+failure task and stop its workers. Only the first stop performs retirement and
+reports its cause; other workers observing that shutdown do not duplicate it.
+Capture closes the handle in `finally`, avoiding
 an unserviced interceptor blocking the host indefinitely.
 
 The manager watches engine completion and the routing core's exit task. On failure,
 it reports recovery in the main log and retries after 1, 2, 4, 8, 16 and then
 30 seconds, keeping that maximum interval until recovery succeeds. A runtime that
 survives at least a minute resets the backoff. Each attempt takes the lifecycle
-semaphore, checks the watched generation and rebuilds the runtime using its last
-committed plan. Failed attempts release newly acquired resources and retain the
-plan for another retry. The semaphore is not held during backoff. Explicit stop
+semaphore, checks the watched generation and reapplies the last committed plan
+through normal staged replacement. Healthy components and the capture lease stay
+owned; failed attempts release only new candidates and retain the plan for another
+retry. The semaphore is not held during backoff. Explicit stop
 clears the plan; stop/exit cancels in-progress preparation as well as the watcher.
-Superseded watchers cannot retire a newer generation. The saved enabled preference
-is never cleared by recovery. `IsRunning` includes startup/resource ownership
+Superseded watchers cannot retire a newer generation. The watched generation and
+enabled preference are checked under the lifecycle semaphore before reporting:
+intentional disposal of a superseded core must not log a false recovery notice.
+The saved enabled preference is never cleared by recovery. `IsRunning` includes
+startup/resource ownership
 and the live supervisor task, including retry backoff, for the TUN exclusion
 check. A failed restart must not let TUN activate before the next retry restarts
 capture. Recovery can interrupt connections and is not a
 firewall guarantee during intervals when the capture handle is closed.
 
-Stop cancels preparation, cancels the current observer and drains the engine
+Stop resets tracked TCP streams before disabling injection, then cancels
+preparation, cancels the current observer and drains the engine
 before retiring cores. Engine disposal stops producers and awaits worker tasks
 before snapshotting remaining TCP and UDP tasks: a final accept/capture iteration
 can otherwise register a task after disposal's initial snapshot. Only after those
@@ -866,15 +953,21 @@ cover these boundaries:
 | `SocketHistoryTests.cs` | Repeated authorizations, many UDP peers, simulated twelve-hour missing-close churn, live endpoint preservation, transient table gaps and reconciliation identity checks. |
 | `OwnerTableTests.cs` | Real dual-stack TCP/UDP owner tables parsed into the production index. |
 | `AttributionTests.cs` | Indexed lookup cost, ownership changes, bounded deferral, selective TCP retirement and native socket closure. |
-| `RuntimeTests.cs` | Staging/reuse, rollback, cancellation at commitment, failure observation, automatic recovery, empty-policy shutdown, committed replacement after retirement failure and release of every owned resource after cleanup failure. |
+| `RuntimeTests.cs` | Staging/reuse, unchanged-plan no-op, rollback, cancellation at commitment, failure observation, recovery of only failed components, 100 successive observer recoveries with one healthy core, empty-policy shutdown and cleanup failure. |
+| `SharedProfileTests.cs` | Independent endpoint/rule revocation after failed preparation, recoverable rollback and profile invalidation when revocation cannot be confirmed. |
 | `ServiceRuleTests.cs` | Shared-host module identity, process generations, UDP socket reuse after service enrichment and bypass of unrelated traffic when service and standalone port rules coexist. |
 | `PacketTests.cs` | Native address layout, IPv4/IPv6 bounds and rewriting, scope, NAT collisions, and SYN/reconnect handling. |
+| `ReconnectTests.cs` | Routed TCP stalls after relay loss/replacement, idle-stream resets, closed-rule tombstones, sequence wrap/zero ACK, and clean same-tuple reconnects without reset loops. |
+| `UdpCutoverTests.cs` | Three actual localhost SOCKS profiles used successively by the same synthetic IPv4/IPv6 application socket endpoint. |
 | `PacketBatchTests.cs` | Mixed IP framing, metadata alignment, maximum packet size, bounded flushing, owned output, and no replay after injection failure. |
-| `FragmentTests.cs` | Out-of-order assembly, early unselected bypass, policy invalidation, SYN/reflection exceptions, overlap and expiry. |
+| `FragmentTests.cs` | Out-of-order assembly, complete-datagram attribution, overlap, length bounds and expiry. |
+| `UdpFragmentRegressionTests.cs` | IPv4/IPv6 IP-ID reuse across sockets, IPv6 Destination Options after Fragment headers, and exact payload preservation through MTU-sized/large reassembly and SOCKS framing. |
 | `SocksTests.cs` | Internal endpoint authentication, split replies, domain bind replies, IPv6, framing, and failed-method behavior. |
 | `UdpSessionTests.cs` | Byte budget and release, pooled buffer ownership on send/rejection/cancellation/failure, exact wire/reply payloads from empty through large datagrams, queued ownership, sends after process exit with discarded replies, stale/reused owners, multi-peer association identity, actual reply peers, domain relay endpoints, and internal endpoint preparation. |
 | `UdpRecoveryTests.cs` | Stale-snapshot recovery without replacing the association, terminal owner/PID/endpoint/rule changes, and IPv4/IPv6 SOCKS datagram exchanges that replace invalidated sessions and preserve source endpoints and payloads. |
 | `UdpReplyWaitTests.cs` | Snapshot broadcast and publication races, bounded waiting despite repeated stale updates, changed ownership during waiting, and cancellation by session or SOCKS control closure. |
+| `UdpInjectionTests.cs` | A rejected reply injection followed by successful small/large exchanges on the same SOCKS association and source endpoint. |
+| `LocalTrafficTests.cs` | Native discovery/configuration scopes, per-adapter prefixes, unchanged shared-bind packets and out-of-order fragments, opt-out behavior, and TCP translation/pending-fragment preservation across policy changes. |
 | `ShutdownTests.cs` | Accept reset/abort recovery, fatal listener shutdown, cancellation during handshake stages, and late task registration during disposal. |
 
 `RouteTestFactory` builds the production shared policy for attribution tests;

@@ -88,7 +88,7 @@ internal sealed class RouteInterfaceMonitor(Config config, Func<Config, Task<int
             }
             catch { config.AppRouting.InterfaceMonitoring = previous; throw; }
         }
-        var policy = new RouteInterfacePolicy(updated, adapters);
+        var policy = new RouteInterfacePolicy(updated, adapters, config.AppRouting.BypassLocalTraffic);
         if (!policy.SameAs(Policy)) { Volatile.Write(ref _policy, policy); }
     }
 

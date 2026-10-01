@@ -1,7 +1,7 @@
 namespace ServiceLib.Services.AppRouting;
 
 internal sealed record RouteInterfaceInfo(string Id, string Name, string Description,
-    OperationalStatus Status, uint IPv4Index, uint IPv6Index);
+    OperationalStatus Status, uint IPv4Index, uint IPv6Index, IReadOnlyList<RouteInterfaceAddress>? Addresses = null);
 
 internal static class RouteInterfaceCatalog
 {
@@ -16,7 +16,8 @@ internal static class RouteInterfaceCatalog
                 var properties = a.GetIPProperties();
                 return new RouteInterfaceInfo(a.Id, a.Name, a.Description, a.OperationalStatus,
                     a.Supports(NetworkInterfaceComponent.IPv4) ? (uint)(properties.GetIPv4Properties()?.Index ?? 0) : 0,
-                    a.Supports(NetworkInterfaceComponent.IPv6) ? (uint)(properties.GetIPv6Properties()?.Index ?? 0) : 0);
+                    a.Supports(NetworkInterfaceComponent.IPv6) ? (uint)(properties.GetIPv6Properties()?.Index ?? 0) : 0,
+                    properties.UnicastAddresses.Select(ip => new RouteInterfaceAddress(ip.Address, ip.PrefixLength)).ToArray());
             }), filters);
     }
 
@@ -48,11 +49,15 @@ internal sealed class RouteInterfacePolicy
 {
     private readonly Dictionary<(uint Index, bool IPv6), (string Id, bool Monitored)> _interfaces = [];
     private readonly bool _monitorNew;
+    private readonly bool _bypassLocalTraffic;
+    private readonly RouteLocalTraffic _localTraffic;
     public static RouteInterfacePolicy All { get; } = new(new(), []);
 
-    public RouteInterfacePolicy(AppRouteInterfaceOptions options, IReadOnlyList<RouteInterfaceInfo> adapters)
+    public RouteInterfacePolicy(AppRouteInterfaceOptions options, IReadOnlyList<RouteInterfaceInfo> adapters, bool bypassLocalTraffic = true)
     {
         _monitorNew = options.MonitorNewInterfaces;
+        _bypassLocalTraffic = bypassLocalTraffic;
+        _localTraffic = new(adapters);
         var choices = options.Interfaces.ToDictionary(i => i.Id, i => i.Monitored, StringComparer.OrdinalIgnoreCase);
         foreach (var adapter in adapters)
         {
@@ -64,10 +69,14 @@ internal sealed class RouteInterfacePolicy
 
     public bool Monitors(uint index, bool ipv6) => _interfaces.TryGetValue((index, ipv6), out var adapter) ? adapter.Monitored : _monitorNew;
 
+    public bool BypassesLocalTraffic(uint index, IPAddress destination) => _bypassLocalTraffic && _localTraffic.Bypasses(index, destination);
+    public bool BypassesLocalTraffic(uint index, RouteFlow flow) => _bypassLocalTraffic && _localTraffic.Bypasses(index, flow);
+
     public bool Retains(RouteInterfacePolicy previous, uint index, bool ipv6) => Monitors(index, ipv6) &&
         string.Equals(_interfaces.GetValueOrDefault((index, ipv6)).Id,
             previous._interfaces.GetValueOrDefault((index, ipv6)).Id, StringComparison.OrdinalIgnoreCase);
 
-    public bool SameAs(RouteInterfacePolicy other) => _monitorNew == other._monitorNew &&
+    public bool SameAs(RouteInterfacePolicy other) => _monitorNew == other._monitorNew && _bypassLocalTraffic == other._bypassLocalTraffic &&
+        _localTraffic.SameAs(other._localTraffic) &&
         _interfaces.Count == other._interfaces.Count && _interfaces.All(p => other._interfaces.TryGetValue(p.Key, out var value) && value == p.Value);
 }

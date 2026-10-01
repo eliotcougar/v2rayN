@@ -1935,4 +1935,7 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="AppRoutingServiceUnavailable" xml:space="preserve">
     <value>نصب نشده است</value>
   </data>
+  <data name="AppRoutingBypassLocalTraffic" xml:space="preserve">
+    <value>ارسال مستقیم ترافیک کشف محلی و پیکربندی شبکه</value>
+  </data>
 </root>

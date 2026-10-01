@@ -2115,4 +2115,7 @@ The "Get Certificate" action may fail if a self-signed certificate is used or if
   <data name="AppRoutingServiceUnavailable" xml:space="preserve">
     <value>Not installed</value>
   </data>
+  <data name="AppRoutingBypassLocalTraffic" xml:space="preserve">
+    <value>Keep local discovery and network configuration traffic direct</value>
+  </data>
 </root>

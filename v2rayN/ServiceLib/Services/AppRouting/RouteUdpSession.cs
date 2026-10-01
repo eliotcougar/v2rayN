@@ -35,16 +35,11 @@ internal sealed class RouteUdpSession : IDisposable
     // A permanently invalid reply owner must not leave an outbound-only session
     // cached forever. Already-attributed queued packets still use _canSend below.
     public bool IsUsable => !_stop.IsCancellationRequested && !Completion.IsCompleted && _canSend() && _canReuse();
-    private long _lastActivity = Environment.TickCount64;
-    public long LastActivity => Interlocked.Read(ref _lastActivity);
-
-    internal bool CanExpire(long now)
+    internal bool CanRetire()
     {
-        if (Completion.IsCompleted) { return true; }
-        if (now - LastActivity <= 60_000) { return false; }
-        // Silence does not close the application's socket. Keep its association
-        // and source port until fresh evidence invalidates that socket. A stale
-        // snapshot cannot retire a live VPN or discard a delayed reply.
+        if (Completion.IsCompleted || !_canSend()) { return true; }
+        // Ownership, not inactivity, determines this association's lifetime.
+        // Stale evidence suppresses replies without retiring a live VPN socket.
         _ownsFlow();
         return !_canReuse();
     }
@@ -73,7 +68,6 @@ internal sealed class RouteUdpSession : IDisposable
             Dispose();
             return;
         }
-        Interlocked.Exchange(ref _lastActivity, Environment.TickCount64);
         if (Volatile.Read(ref _queuedBytes) + payload.Length > MaxQueuedBytes)
         {
             return;
@@ -116,7 +110,7 @@ internal sealed class RouteUdpSession : IDisposable
             }
 
             await _socket.ConnectAsync(relay, connectTimeout.Token);
-            var receive = Receive();
+            var receive = Receive(error);
             var send = SendLoop(error);
             var control = WatchControl();
             try
@@ -181,7 +175,7 @@ internal sealed class RouteUdpSession : IDisposable
         }
     }
 
-    private async Task Receive()
+    private async Task Receive(Action<Exception> error)
     {
         var bytes = new byte[65535];
         while (!_stop.IsCancellationRequested)
@@ -200,8 +194,10 @@ internal sealed class RouteUdpSession : IDisposable
                 continue;
             }
 
-            Interlocked.Exchange(ref _lastActivity, Environment.TickCount64);
-            _reply(peer, bytes.AsSpan(offset, count - offset));
+            try { _reply(peer, bytes.AsSpan(offset, count - offset)); }
+            // A rejected injection concerns this datagram, not the SOCKS socket.
+            // Preserve the association/source port for later replies and sends.
+            catch (Exception ex) when (ex is IOException or Win32Exception) { error(ex); }
         }
     }
 

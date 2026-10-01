@@ -6,6 +6,7 @@ public class AppRoutingItem
     {
         get; set;
     }
+    public bool BypassLocalTraffic { get; set; } = true;
     // Older preview clients stored standalone Rules here. Unknown JSON fields are
     // ignored: matching now comes exclusively from the ordinary routing table.
     public AppRouteInterfaceOptions InterfaceMonitoring { get; set; } = new();

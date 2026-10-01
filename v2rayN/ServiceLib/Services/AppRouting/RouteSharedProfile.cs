@@ -7,7 +7,7 @@ internal sealed class RouteSharedProfile : IRouteProfile
 {
     private readonly IRouteProfile _core;
     private readonly RouteSharedTemplate _template;
-    private readonly RouteCoreApi _api;
+    private readonly IRouteCoreApi _api;
     private readonly CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, RouteSocksEndpoint> _endpoints = [];
@@ -20,7 +20,7 @@ internal sealed class RouteSharedProfile : IRouteProfile
     public Task Completion => _completion.Task;
     public RouteSharedPolicy SharedPolicy { get; }
 
-    private RouteSharedProfile(IRouteProfile core, RouteSharedTemplate template, RouteCoreApi api, RouteSharedRules rules,
+    internal RouteSharedProfile(IRouteProfile core, RouteSharedTemplate template, IRouteCoreApi api, RouteSharedRules rules,
         Func<string, CancellationToken, Task<IRouteProfile>> startCore)
     {
         _core = core; _template = template; _api = api; _startCore = startCore;
@@ -36,7 +36,7 @@ internal sealed class RouteSharedProfile : IRouteProfile
         template.Root["api"] = new JsonObject { ["tag"] = "app-routing-api", ["listen"] = $"127.0.0.1:{apiPort}",
             ["services"] = new JsonArray("HandlerService", "RoutingService") };
         var instance = await RouteProfileInstance.StartAsync(template.Root.ToJsonString(), core, environment, token);
-        return new RouteSharedProfile(instance, template, new(core, environment, apiPort), rules,
+        return new RouteSharedProfile(instance, template, new RouteCoreApi(core, environment, apiPort), rules,
             (config, cancellation) => RouteProfileInstance.StartAsync(config, core, environment, cancellation));
     }
 
@@ -55,11 +55,11 @@ internal sealed class RouteSharedProfile : IRouteProfile
         await _gate.WaitAsync(token);
         try
         {
+            if (Completion.IsCompleted) { throw new IOException("The shared application-routing core has stopped."); }
             if (_endpoints.TryGetValue(key, out var existing)) { return existing; }
             // A listener is shared by all processes with the same rule membership, not by PID.
             // Bound resource use for unusually large sets of ancestry combinations.
             if (_endpoints.Count >= 256) { throw new IOException("Too many distinct application-routing match combinations (256). Simplify overlapping child-process rules."); }
-            if (Completion.IsCompleted) { throw new IOException("The shared application-routing core has stopped."); }
             var tag = "app-match-" + Guid.NewGuid().ToString("N");
             if (_useConfigFiles) { return await PrepareFileCore(markers, tag, key, token); }
             var endpoint = new RouteSocksEndpoint(ReservePort(), "app-route", Convert.ToHexString(RandomNumberGenerator.GetBytes(24)));
@@ -92,13 +92,21 @@ internal sealed class RouteSharedProfile : IRouteProfile
                 // The API may have committed before its client was cancelled. Revoke both
                 // independently, using a cleanup token, before allowing another attempt.
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                void FailedRollback(Exception error)
+                {
+                    Logging.SaveLog("AppRouting endpoint rollback", error);
+                    // A timed-out API call may have committed. If revocation cannot
+                    // be confirmed, replace this core instead of accumulating orphan
+                    // listeners/rules through repeated connection attempts.
+                    _completion.TrySetException(new IOException("Application-routing endpoint rollback failed.", error));
+                }
                 if (inboundAttempted)
                 {
                     try { await _api.Execute("rmi", null, cleanup.Token, tag); }
-                    catch (Exception ex) { Logging.SaveLog("AppRouting inbound cleanup", ex); }
+                    catch (Exception ex) { FailedRollback(ex); }
                 }
                 try { await _api.Execute("rmrules", null, cleanup.Token, nativeRules.Select(r => r!["ruleTag"]!.GetValue<string>()).ToArray()); }
-                catch (Exception ex) { Logging.SaveLog("AppRouting rule cleanup", ex); }
+                catch (Exception ex) { FailedRollback(ex); }
                 throw;
             }
         }
